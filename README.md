@@ -13,9 +13,10 @@ processes your webcam feed in real time and exposes the beautified result as a
 delivers smooth, natural face beautification live, with filters and AR effects,
 and is designed to later output **NDI** for network video streaming.
 
-> 🚧 **Status:** Early concept / pre-development. There is no runnable code yet —
-> the repository currently holds only documentation. The tech stack and feature
-> scope below are **proposed** and open for discussion.
+> **Status:** Design spec complete — see [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md).
+> A Phase-0 de-risking spike plan is created — see [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md).
+> Implementation has not started; there is no runnable code yet. The tech stack
+> and feature scope are locked in the design spec — see `spec/2026-08-15-v1-mvp-design.md`.
 
 ## ✨ Planned Features
 
@@ -27,37 +28,53 @@ and is designed to later output **NDI** for network video streaming.
 - **NDI output** (planned) — stream the beautified feed over the network via NDI®
 - **Cross-platform** (planned) — Windows first, macOS later
 
-## 🛠 Tech Stack (proposed)
+## Tech Stack (locked — see spec)
 
-| Area | Choice (to confirm) |
-|------|---------------------|
+| Area | Choice |
+|------|--------|
 | Platform | Windows (first), macOS later |
-| Core engine | C++ |
+| Language | C++17 |
 | Capture | Windows Media Foundation |
-| Virtual camera | Virtual camera driver (DirectShow / Media Foundation) |
-| Rendering | D3D11 / OpenGL ES shaders |
-| Face / ML | MediaPipe / ONNX Runtime (TBD) |
-| NDI | NDI® SDK (planned) |
-| UI | Qt (proposed) |
+| Render/compute | bgfx (D3D12 on Windows, pinned to align DirectML); self-write shaders, referencing GPUPixel/GPUImage |
+| Face ML | ONNX Runtime + DirectML EP (lightweight landmark model) |
+| Virtual camera | Kernel-mode AVStream minidriver (WDK + EV cert attestation signing) |
+| Output | NV12 primary, ARGB fallback; 1080p default |
+| UI | Qt6 (v1); engine UI-agnostic via C ABI (WinUI3/SwiftUI later) |
+| NDI | NDI® SDK (optional proprietary plugin, out of core open build) — SparkFace v4 milestone |
+| Build | CMake + CMakePresets; mixed dependency acquisition |
+| License | Apache-2.0; driver source-available; Qt6 LGPL dynamic link; NDI isolated |
 
-## 📂 Planned Structure
+## Project Structure
 
 ```
 SparkFace/
 ├── docs/                   # User & general documentation
 ├── spec/                   # Technical design & specs
-├── src/                    # Source code
-│   ├── app/                # Application & UI
-│   ├── core-engine/        # Beauty & rendering pipeline (C++)
-│   ├── core-capture/       # Webcam / screen capture
-│   ├── driver-virtualcam/  # Virtual camera driver
-│   └── plugin-ndi/         # NDI output plugin (planned)
+├── plans/                  # Implementation plans
+├── src/
+│   ├── app/                # Application & UI (Qt6)
+│   ├── core/               # Engine internals
+│   │   ├── engine/         # Beauty & render pipeline (bgfx/D3D12)
+│   │   ├── capture/        # Media Foundation capture
+│   │   ├── face/           # ONNX Runtime + DirectML face landmarks
+│   │   ├── sinks/          # Output sink interface + virtual-cam sink
+│   │   └── presets/        # Graded-level preset system
+│   ├── driver/virtualcam/  # Kernel AVStream minidriver
+│   ├── plugin/ndi/         # NDI output plugin (SparkFace v4, proprietary, out-of-core)
+│   └── c-api/              # C ABI facade (extern "C" + opaque handle)
 ├── CMakeLists.txt
+├── AGENT.md
+├── CLAUDE.md
 ├── README.md
 └── README_zh.md
 ```
 
-## 🗺 Roadmap
+## Design & Specs
+
+- [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) — v1 (MVP) design spec (architecture, module map, C ABI, build system, risks).
+- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) — Phase-0 de-risking spike plan (kernel driver, GPU texture sharing, face-model perf).
+
+## Roadmap
 
 - [x] Project kickoff & naming
 - [ ] Tech stack confirmation
@@ -70,16 +87,16 @@ SparkFace/
 - [ ] NDI output
 - [ ] macOS support
 
-## 🚀 Getting Started
+## Getting Started
 
 > TBD — scaffold and build instructions will be added once the project structure
 > is in place.
 
-## 📜 License
+## License
 
-TBD (consider MIT or Apache-2.0).
+Apache-2.0.
 
-## 🤝 Contributing
+## Contributing
 
 Not yet open — the project is in the concept phase. Once development starts,
 contribution guidelines will be published here.

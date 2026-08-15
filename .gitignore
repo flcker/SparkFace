@@ -1,0 +1,38 @@
+# Build artifacts
+build/
+out/
+cmake-build*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.pdb
+*.lib
+*.exp
+CMakeUserPresets.json
+*.ilk
+*.tlog
+
+# IDE / editor
+.vs/
+.vscode/
+*.user
+.idea/
+.DS_Store
+Thumbs.db
+
+# SparkFace: spike model binaries and test-build driver outputs
+spikes/**/models/*.onnx
+spikes/**/ort-dml/
+spikes/**/*.sys
+spikes/**/*.cat
+spikes/**/*.inf
+
+# Qt user files
+*.pro.user
+*.pro.user.*

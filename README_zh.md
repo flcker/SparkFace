@@ -11,8 +11,9 @@
 **虚拟摄像头** 输出，可供任意视频软件（OBS、Zoom、Teams、Discord 等）调用。它提供自然流畅的实时美颜，
 并支持滤镜与 AR 特效，后续将支持 **NDI** 网络推流。
 
-> 🚧 **当前状态：** 早期概念 / 预开发阶段。尚无可运行代码——仓库目前仅包含文档。
-> 下方的技术栈与功能范围均为**提议方案**，欢迎讨论调整。
+> **当前状态：** 设计规格已完成——见 [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md)。
+> Phase-0 风险验证 spike 计划已制定——见 [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md)。
+> 实现尚未开始——尚无可运行代码。技术栈与功能范围已在设计 spec 中锁定——见 `spec/2026-08-15-v1-mvp-design.md`。
 
 ## ✨ 规划功能
 
@@ -24,37 +25,53 @@
 - **NDI 输出**（规划）—— 通过 NDI® 将美化画面经网络推流
 - **跨平台**（规划）—— Windows 优先，后续 macOS
 
-## 🛠 技术栈（提议）
+## 技术栈（锁定 — 见 spec）
 
-| 方向 | 选型（待确认） |
-|------|----------------|
+| 方向 | 选型 |
+|------|------|
 | 平台 | Windows（优先），后续 macOS |
-| 核心引擎 | C++ |
+| 语言 | C++17 |
 | 采集 | Windows Media Foundation |
-| 虚拟摄像头 | 虚拟摄像头驱动（DirectShow / Media Foundation） |
-| 渲染 | D3D11 / OpenGL ES 着色器 |
-| 人脸 / ML | MediaPipe / ONNX Runtime（待定） |
-| NDI | NDI® SDK（规划） |
-| UI | Qt（提议） |
+| 渲染/计算 | bgfx（Windows 上 pin D3D12 对齐 DirectML）；自写 shader，算法参考 GPUPixel/GPUImage |
+| 人脸 ML | ONNX Runtime + DirectML EP（轻量关键点模型） |
+| 虚拟摄像头 | 内核态 AVStream minidriver（WDK + EV 证书 attestation 签名） |
+| 输出 | NV12 为主、ARGB 兜底；默认 1080p |
+| UI | Qt6（v1）；引擎经 C ABI 与 UI 解耦（WinUI3/SwiftUI 后续） |
+| NDI | NDI® SDK（可选专有插件，核心开源构建外）— SparkFace v4 里程碑 |
+| 构建 | CMake + CMakePresets；依赖混合获取 |
+| License | Apache-2.0；驱动 source-available；Qt6 LGPL 动态链接；NDI 隔离 |
 
-## 📂 规划结构
+## 项目结构
 
 ```
 SparkFace/
 ├── docs/                   # 用户与通用文档
 ├── spec/                   # 技术方案与设计规格
-├── src/                    # 工程源码
-│   ├── app/                # 应用与 UI
-│   ├── core-engine/        # 美颜与渲染管线（C++）
-│   ├── core-capture/       # 摄像头 / 屏幕采集
-│   ├── driver-virtualcam/  # 虚拟摄像头驱动
-│   └── plugin-ndi/         # NDI 输出插件（规划）
+├── plans/                  # 实现计划
+├── src/
+│   ├── app/                # 应用与 UI（Qt6）
+│   ├── core/               # 引擎内部
+│   │   ├── engine/         # 美颜与渲染管线（bgfx/D3D12）
+│   │   ├── capture/        # Media Foundation 采集
+│   │   ├── face/           # ONNX Runtime + DirectML 人脸关键点
+│   │   ├── sinks/          # 输出端接口 + 虚拟摄像头 sink
+│   │   └── presets/        # 分级预设系统
+│   ├── driver/virtualcam/  # 内核态 AVStream minidriver
+│   ├── plugin/ndi/         # NDI 输出插件（SparkFace v4，专有，构建外）
+│   └── c-api/              # C ABI facade（extern "C" + opaque handle）
 ├── CMakeLists.txt
+├── AGENT.md
+├── CLAUDE.md
 ├── README.md
 └── README_zh.md
 ```
 
-## 🗺 路线图
+## 设计与规格
+
+- [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) —— v1（MVP）设计规格（架构、模块图、C ABI、构建系统、风险）。
+- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) —— Phase-0 风险验证 spike 计划（内核驱动、GPU 纹理共享、人脸模型性能）。
+
+## 路线图
 
 - [x] 项目启动与命名
 - [ ] 技术栈确认
@@ -67,15 +84,15 @@ SparkFace/
 - [ ] NDI 输出
 - [ ] macOS 支持
 
-## 🚀 快速开始
+## 快速开始
 
 > 待补充——待项目结构建立后，将补充脚手架与构建说明。
 
-## 📜 许可证
+## 许可证
 
-待定（考虑 MIT 或 Apache-2.0）。
+Apache-2.0。
 
-## 🤝 贡献
+## 贡献
 
 暂未开放——项目仍处于概念阶段。开发启动后，将在此发布贡献指南。
 
