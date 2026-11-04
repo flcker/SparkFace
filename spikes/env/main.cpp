@@ -98,6 +98,16 @@ AdapterSelection select_intel_adapter() {
     throw std::runtime_error("No hardware Intel adapter was found");
 }
 
+struct WindowGuard {
+    HWND handle = nullptr;
+
+    ~WindowGuard() {
+        if (handle != nullptr) {
+            DestroyWindow(handle);
+        }
+    }
+};
+
 struct BgfxGuard {
     bool initialized = false;
 
@@ -108,20 +118,29 @@ struct BgfxGuard {
     }
 };
 
-void run_bgfx_gate(ID3D12Device* const device, const DXGI_ADAPTER_DESC1& adapter) {
+void run_bgfx_gate(ComPtr<ID3D12Device> device, const DXGI_ADAPTER_DESC1& adapter) {
+    WindowGuard window{CreateWindowExW(0, L"STATIC", L"SparkFace Phase-0", WS_OVERLAPPEDWINDOW,
+                                       CW_USEDEFAULT, CW_USEDEFAULT, 16, 16, nullptr, nullptr,
+                                       GetModuleHandleW(nullptr), nullptr)};
+    if (window.handle == nullptr) {
+        throw std::runtime_error("CreateWindowExW failed");
+    }
+
     bgfx::Init init;
     init.type                 = bgfx::RendererType::Direct3D12;
     init.vendorId             = static_cast<std::uint16_t>(adapter.VendorId);
     init.deviceId             = static_cast<std::uint16_t>(adapter.DeviceId);
-    init.platformData.context = device;
-    init.resolution.width     = 1;
-    init.resolution.height    = 1;
+    init.platformData.nwh     = window.handle;
+    init.platformData.context = device.Get();
+    init.resolution.width     = 16;
+    init.resolution.height    = 16;
     init.resolution.reset     = BGFX_RESET_NONE;
 
     BgfxGuard guard;
     if (!bgfx::init(init)) {
         throw std::runtime_error("bgfx D3D12 initialization failed");
     }
+    device.Reset();
     guard.initialized = true;
 
     const bgfx::Caps* const caps = bgfx::getCaps();
@@ -268,6 +287,7 @@ void print_build_environment() {
               << "msvc_full_version=" << _MSC_FULL_VER << '\n'
               << "windows_sdk_version=" << SF_WINDOWS_SDK_VERSION << '\n'
               << "vcpkg_baseline=" << SF_VCPKG_BASELINE << '\n'
+              << "bgfx_port_version=" << SF_BGFX_PORT_VERSION << '\n'
               << "onnxruntime_directml_version=" << SF_ORT_DML_VERSION << '\n';
 }
 
@@ -276,6 +296,8 @@ void print_build_environment() {
 int main() {
     bool com_initialized          = false;
     bool media_foundation_started = false;
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
 
     try {
         print_build_environment();
@@ -306,13 +328,7 @@ int main() {
                                         IID_PPV_ARGS(&device)),
                       "D3D12CreateDevice");
 
-        D3D12_COMMAND_QUEUE_DESC queue_description{};
-        queue_description.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        ComPtr<ID3D12CommandQueue> command_queue;
-        check_hresult(device->CreateCommandQueue(&queue_description, IID_PPV_ARGS(&command_queue)),
-                      "ID3D12Device::CreateCommandQueue");
-
-        run_bgfx_gate(device.Get(), selected.description);
+        run_bgfx_gate(std::move(device), selected.description);
         run_directml_gate(selected.index);
 
         MFShutdown();

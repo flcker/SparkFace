@@ -28,7 +28,7 @@
 
 **Files:**
 - Create: `CMakeLists.txt` and `CMakePresets.json` (throwaway Phase-0 root)
-- Create: `vcpkg.json` (full Git baseline + bgfx manifest dependency)
+- Create: `vcpkg.json` (full Git baseline + explicit bgfx version override)
 - Create: `scripts/bootstrap-vcpkg.ps1` (bootstraps the same vcpkg tool commit on every developer/CI machine)
 - Create: `scripts/build-phase0-env.ps1` (single configure/build/run entry point)
 - Create: `spikes/env/main.cpp` and `spikes/env/CMakeLists.txt`
@@ -52,13 +52,13 @@ Require Windows build ≥22000 and record the Intel Iris Xe adapter name. If the
 
 - [x] **Step 3: Fetch locked dependencies**
 
-`vcpkg.json` pins the registry snapshot and resolves bgfx plus transitive ports with triplet `x64-windows` (bgfx remains a static library but uses the dynamic MSVC CRT, matching ONNX Runtime and the later Qt app). CMake downloads ONNX Runtime DirectML from the versioned NuGet URL with an expected SHA-256. `CMakePresets.json` fixes Ninja, Debug, the vcpkg toolchain, and the triplet. The gate records CMake, MSVC, Windows SDK, vcpkg baseline, and ONNX Runtime versions so cross-machine drift is visible.
+`vcpkg.json` pins the registry snapshot and explicitly overrides bgfx to `1.129.8940-496#1`; transitive ports resolve with triplet `x64-windows` (bgfx remains a static library but uses the dynamic MSVC CRT, matching ONNX Runtime and the later Qt app). CMake downloads ONNX Runtime DirectML from the versioned NuGet URL with an expected SHA-256. `CMakePresets.json` fixes Ninja, Debug, the vcpkg toolchain, and the triplet. The gate records CMake, MSVC, Windows SDK, vcpkg baseline, bgfx port, and ONNX Runtime versions so cross-machine drift is visible.
 
 - [x] **Step 4: Write the trivial gate program**
 
-`spikes/env/main.cpp` (throwaway): create a D3D12 device and queue on the Intel adapter; initialize bgfx with that external D3D12 context and run one `bgfx::frame`; create an ONNX Runtime session with CPU fallback disabled and execute a pinned Mul model through DirectML; call `MFStartup`; compile/link against `mfplat.lib` and `mfsensorgroup.lib`; verify `MFCreateVirtualCamera` is exported by `mfsensorgroup.dll`. Print toolchain versions, OS build, adapter identity, provider/result, and a pass line. Actual camera registration belongs to Spike A.
+`spikes/env/main.cpp` (throwaway): create a D3D12 device on the Intel adapter; initialize bgfx with that external D3D12 context and a hidden Win32 surface, transfer device ownership to bgfx, and run one `bgfx::frame`; create an ONNX Runtime session with CPU fallback disabled and execute a pinned Mul model through DirectML; call `MFStartup`; compile/link against `mfplat.lib` and `mfsensorgroup.lib`; verify `MFCreateVirtualCamera` is exported by `mfsensorgroup.dll`. Print toolchain versions, OS build, adapter identity, provider/result, and a pass line. Actual camera registration belongs to Spike A.
 
-- [ ] **Step 5: Build + run**
+- [x] **Step 5: Build + run**
 
 Run only the repository entry point:
 ```powershell
@@ -66,9 +66,9 @@ Run only the repository entry point:
 ```
 Expected: pinned vcpkg bootstrap, successful dependency restore/configure/build, Windows build ≥22000, Intel Iris Xe, D3D12 bgfx frame, `MFCreateVirtualCamera`, a finite DirectML model result with CPU fallback disabled, and `ENV_GATE_PASS`. Missing any item is a blocker.
 
-**Current blocker:** configure and build pass, but Windows Enterprise Code Integrity policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` rejects the unsigned locally-built `env_gate.exe` before process startup. No eligible code-signing certificate is installed. Runtime checks for bgfx, DirectML, and `MFCreateVirtualCamera` therefore remain unexecuted; do not record PASS until the same binary runs on a permitted developer host or receives an enterprise-accepted signature.
+Observed PASS on the Iris Xe reference workstation after disabling Windows Smart App Control, which does not support per-application exceptions. The gate selected bgfx Direct3D 12, loaded `MFCreateVirtualCamera`, executed the pinned ONNX Mul model through `DmlExecutionProvider` with CPU fallback disabled, returned finite output `2`, and printed `ENV_GATE_PASS`.
 
-- [ ] **Step 6: Record env gate + commit**
+- [x] **Step 6: Record env gate + commit**
 
 Append `env gate PASS — os_build=<n>, adapter=<name>, MFCreateVirtualCamera=available, bgfx=D3D12, DirectML=<version/result>, cmake=<version>, msvc=<version>, windows_sdk=<version>, vcpkg_baseline=<commit>` to the Verdict Log. Commit the env scaffolding on the `feat/*` branch:
 ```bash
@@ -235,7 +235,7 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 
 *(Executor appends each spike's verdict here as tasks complete. All three verdicts GO = proceed to the second writing-plans pass for the detailed v1 build plan. Any NO-GO = stop and report to the user before planning.)*
 
-- Task 0 env gate: **BLOCKED** — build PASS (`CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, `vcpkg baseline a4f7741c53c97354fc43222fea17955c657dd549`, `bgfx 1.129.8940-496#1`, `ONNX Runtime DirectML 1.24.4`); host prechecks PASS (`Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, SDK/runtime files for `MFCreateVirtualCamera` present); execution BLOCKED before process start by Enterprise Code Integrity policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`; bgfx/DirectML/MF runtime verdict pending.
+- Task 0 env gate: **GO** — `Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, `MFCreateVirtualCamera` available, bgfx `1.129.8940-496#1` selected Direct3D 12, ONNX Runtime DirectML `1.24.4` returned finite output `2` with CPU fallback disabled, `CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, vcpkg baseline `a4f7741c53c97354fc43222fea17955c657dd549`; `ENV_GATE_PASS` observed.
 - [Spike A — Windows user-mode virtual camera verdict]
 - [Spike B — GPU sharing/fence/camera-handoff verdict]
 - [Spike C — face model verdict]

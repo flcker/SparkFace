@@ -13,7 +13,7 @@ processes your webcam feed in real time and exposes the beautified result as a
 delivers smooth, natural face beautification live, with filters and AR effects,
 and is designed to later output **NDI** for network video streaming.
 
-> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 configures and builds successfully; execution is currently blocked on this managed workstation by Enterprise Code Integrity policy. Product implementation has not started. See [the v1 design](spec/2026-08-15-v1-mvp-design.md) and [the measured spike plan](plans/2026-08-15-phase0-spikes.md).
+> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 passed on the Intel Iris Xe reference workstation: Media Foundation virtual-camera API, bgfx Direct3D 12, and ONNX Runtime DirectML all executed successfully. Product implementation has not started. See [the v1 design](spec/2026-08-15-v1-mvp-design.md) and [the measured spike plan](plans/2026-08-15-phase0-spikes.md).
 
 ## ✨ Planned Features
 
@@ -92,7 +92,7 @@ Phase-0 environment gate only (not the product application):
 .\scripts\build-phase0-env.ps1 -Run
 ```
 
-The script bootstraps the repository-pinned vcpkg tool/registry commit, restores locked dependencies, configures, builds, and runs the gate. It requires Windows 11 build 22000+, Visual Studio C++ tools, a matching Windows SDK, CMake, Git, and the Visual Studio Ninja component. Managed machines may require an enterprise-approved signature to execute the locally-built gate.
+The script bootstraps the repository-pinned vcpkg tool/registry commit, restores explicitly locked dependencies, configures, builds, and runs the gate. It requires Windows 11 build 22000+, Visual Studio C++ tools, a matching Windows SDK, CMake, Git, and the Visual Studio Ninja component. Smart App Control blocks unsigned local development binaries and does not support per-application exceptions.
 
 ## License
 

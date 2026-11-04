@@ -4,5 +4,11 @@
   "builtin-baseline": "a4f7741c53c97354fc43222fea17955c657dd549",
   "dependencies": [
     "bgfx"
+  ],
+  "overrides": [
+    {
+      "name": "bgfx",
+      "version": "1.129.8940-496#1"
+    }
   ]
 }

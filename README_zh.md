@@ -11,7 +11,7 @@
 **虚拟摄像头** 输出，可供任意视频软件（OBS、Zoom、Teams、Discord 等）调用。它提供自然流畅的实时美颜，
 并支持滤镜与 AR 特效，后续将支持 **NDI** 网络推流。
 
-> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已完成配置和构建，但当前受管工作站的 Enterprise Code Integrity 策略阻止运行本地未签名程序；正式产品实现尚未开始。详见 [v1 设计](spec/2026-08-15-v1-mvp-design.md) 和 [实测 spike 计划](plans/2026-08-15-phase0-spikes.md)。
+> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已在 Intel Iris Xe 参考工作站通过：Media Foundation 虚拟摄像头 API、bgfx Direct3D 12 和 ONNX Runtime DirectML 均已成功运行。正式产品实现尚未开始。详见 [v1 设计](spec/2026-08-15-v1-mvp-design.md) 和 [实测 spike 计划](plans/2026-08-15-phase0-spikes.md)。
 
 ## ✨ 规划功能
 
@@ -90,7 +90,7 @@ SparkFace/
 .\scripts\build-phase0-env.ps1 -Run
 ```
 
-脚本会引导仓库锁定的 vcpkg 工具/registry commit、恢复固定依赖、配置、构建并运行门禁。要求 Windows 11 build 22000+、Visual Studio C++ 工具、匹配的 Windows SDK、CMake、Git 和 Visual Studio Ninja 组件。受管设备可能需要企业认可的签名才能执行本地构建的门禁程序。
+脚本会引导仓库锁定的 vcpkg 工具/registry commit、恢复显式固定的依赖、配置、构建并运行门禁。要求 Windows 11 build 22000+、Visual Studio C++ 工具、匹配的 Windows SDK、CMake、Git 和 Visual Studio Ninja 组件。Smart App Control 会阻止本地未签名开发程序，且不支持单应用例外。
 
 ## 许可证
 

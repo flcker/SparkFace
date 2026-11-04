@@ -3,6 +3,8 @@ include(FetchContent)
 set(ORT_DML_VERSION "1.24.4")
 file(READ "${PROJECT_SOURCE_DIR}/vcpkg.json" VCPKG_MANIFEST_JSON)
 string(JSON VCPKG_BASELINE GET "${VCPKG_MANIFEST_JSON}" builtin-baseline)
+string(JSON BGFX_PORT_VERSION GET "${VCPKG_MANIFEST_JSON}" overrides 0 version)
+string(REPLACE "#" "-port" BGFX_PORT_VERSION_DEFINE "${BGFX_PORT_VERSION}")
 set(WINDOWS_SDK_VERSION "$ENV{WindowsSDKVersion}")
 string(REGEX REPLACE "\\\\$" "" WINDOWS_SDK_VERSION "${WINDOWS_SDK_VERSION}")
 set(ORT_DML_PACKAGE_URL
@@ -51,6 +53,7 @@ target_compile_definitions(
           WIN32_LEAN_AND_MEAN
           SF_CMAKE_VERSION="${CMAKE_VERSION}"
           SF_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+          SF_BGFX_PORT_VERSION="${BGFX_PORT_VERSION_DEFINE}"
           SF_ORT_DML_VERSION="${ORT_DML_VERSION}"
           SF_VCPKG_BASELINE="${VCPKG_BASELINE}"
           SF_WINDOWS_SDK_VERSION="${WINDOWS_SDK_VERSION}")
@@ -63,7 +66,8 @@ target_link_libraries(
           dxgi
           mfplat
           mfsensorgroup
-          ole32)
+          ole32
+          user32)
 
 add_custom_command(
   TARGET env_gate
