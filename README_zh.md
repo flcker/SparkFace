@@ -11,7 +11,7 @@
 **虚拟摄像头** 输出，可供任意视频软件（OBS、Zoom、Teams、Discord 等）调用。它提供自然流畅的实时美颜，
 并支持滤镜与 AR 特效，后续将支持 **NDI** 网络推流。
 
-> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已在 Intel Iris Xe 参考工作站通过：Media Foundation 虚拟摄像头 API、bgfx Direct3D 12 和 ONNX Runtime DirectML 均已成功运行。正式产品实现尚未开始。详见 [v1 设计](spec/2026-08-15-v1-mvp-design.md) 和 [实测 spike 计划](plans/2026-08-15-phase0-spikes.md)。
+> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已在 Intel Iris Xe 参考工作站通过：Media Foundation 虚拟摄像头 API、bgfx Direct3D 12 和 ONNX Runtime DirectML 均已成功运行。正式产品实现尚未开始。详见[文档索引](docs/README.md)。
 
 ## ✨ 规划功能
 
@@ -43,9 +43,10 @@
 
 ```
 SparkFace/
-├── docs/                   # 用户与通用文档
-├── spec/                   # 技术方案与设计规格
-├── plans/                  # 实现计划
+├── docs/                   # 架构、开发指南和计划
+│   ├── architecture/       # 产品设计与长期决策
+│   ├── development/        # 可复现的开发流程
+│   └── plans/              # 可执行计划与实测结论
 ├── src/
 │   ├── app/                # 应用与 UI（Qt6）
 │   ├── core/               # 引擎内部
@@ -64,10 +65,12 @@ SparkFace/
 └── README_zh.md
 ```
 
-## 设计与规格
+## 文档
 
-- [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) —— v1（MVP）设计规格（架构、模块图、C ABI、构建系统、风险）。
-- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) —— Phase-0 风险验证 spike 计划（用户态虚拟摄像头、GPU 互操作/交接、人脸模型性能）。
+- [文档索引](docs/README.md) —— 项目长篇文档的统一入口。
+- [v1 MVP 设计](docs/architecture/2026-08-15-v1-mvp-design.md) —— 架构、模块图、C ABI、构建系统和风险。
+- [Phase-0 Windows 环境](docs/development/phase0-windows-environment.md) —— 前置条件、依赖锁定、安全约束和已验证输出。
+- [Phase-0 spike 计划](docs/plans/2026-08-15-phase0-spikes.md) —— 用户态虚拟摄像头、GPU 互操作/交接和人脸模型性能门禁。
 
 ## 路线图
 
@@ -91,6 +94,8 @@ SparkFace/
 ```
 
 脚本会引导仓库锁定的 vcpkg 工具/registry commit、恢复显式固定的依赖、配置、构建并运行门禁。要求 Windows 11 build 22000+、Visual Studio C++ 工具、匹配的 Windows SDK、CMake、Git 和 Visual Studio Ninja 组件。Smart App Control 会阻止本地未签名开发程序，且不支持单应用例外。
+
+完整 PASS 契约和故障排查见 [Phase-0 Windows 环境指南](docs/development/phase0-windows-environment.md)。
 
 ## 许可证
 

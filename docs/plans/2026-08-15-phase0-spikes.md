@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++17, CMake, Windows 11 build 22000+, Windows SDK, Media Foundation virtual-camera API, bgfx (D3D12 backend), ONNX Runtime + DirectML EP, Intel Iris Xe iGPU reference machine.
 
-**Spec:** `spec/2026-08-15-v1-mvp-design.md` (§6.3 mandates these spikes before v1 implementation)
+**Spec:** [v1 MVP design](../architecture/2026-08-15-v1-mvp-design.md) (§6.3 mandates these spikes before v1 implementation)
 
 ## Global Constraints
 
@@ -72,7 +72,7 @@ Observed PASS on the Iris Xe reference workstation after disabling Windows Smart
 
 Append `env gate PASS — os_build=<n>, adapter=<name>, MFCreateVirtualCamera=available, bgfx=D3D12, DirectML=<version/result>, cmake=<version>, msvc=<version>, windows_sdk=<version>, vcpkg_baseline=<commit>` to the Verdict Log. Commit the env scaffolding on the `feat/*` branch:
 ```bash
-git add .gitignore CMakeLists.txt CMakePresets.json vcpkg.json scripts/bootstrap-vcpkg.ps1 scripts/build-phase0-env.ps1 spikes/env plans/2026-08-15-phase0-spikes.md
+git add .gitignore CMakeLists.txt CMakePresets.json vcpkg.json scripts/bootstrap-vcpkg.ps1 scripts/build-phase0-env.ps1 spikes/env docs/plans/2026-08-15-phase0-spikes.md
 git commit -m "spike(env): gate Windows 11 virtual camera and GPU stack"
 ```
 
@@ -126,7 +126,7 @@ Append: `Spike A: <GO|GO-WITH-CAVEAT|NO-GO> — apps=<list>, 1080p30=<yes/no>, f
 
 Delete `spikes/virtualcam/` probe code (or leave it on an isolated branch, NOT merged). Commit the verdict-log update only:
 ```bash
-git add plans/2026-08-15-phase0-spikes.md
+git add docs/plans/2026-08-15-phase0-spikes.md
 git commit -m "spike(A): Windows user-mode virtual camera verdict"
 ```
 
@@ -178,7 +178,7 @@ Append: `Spike B: <verdict> — copy_free_gpu=<yes/no>, formats=<list>, fence_pr
 
 Delete `spikes/sharing/`. Commit the verdict-log update:
 ```bash
-git add plans/2026-08-15-phase0-spikes.md
+git add docs/plans/2026-08-15-phase0-spikes.md
 git commit -m "spike(B): GPU sharing and virtual-camera handoff verdict"
 ```
 
@@ -225,7 +225,7 @@ Pick the **lightest model that meets the latency budget AND has sensible landmar
 
 Append to Verdict Log: `Spike C: GO — selected=<model name, N landmarks, license>, per_frame_ms_iGPU=<x>, quality=<0-3>, fallback=<model>`. If no candidate fits ~5-8ms with sensible landmarks, record NO-GO and flag (would force a heavier face-pipeline rethink). Delete `spikes/face/` probe code. Commit verdict-log update:
 ```bash
-git add plans/2026-08-15-phase0-spikes.md
+git add docs/plans/2026-08-15-phase0-spikes.md
 git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 ```
 
@@ -242,9 +242,9 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 
 ## Gate to v1 Build Plan
 
-After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with explicitly accepted product constraints): invoke `superpowers:writing-plans` again to write the **detailed v1 build plan** (`plans/<date>-v1-build.md`), now informed by:
+After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with explicitly accepted product constraints): invoke `superpowers:writing-plans` again to write the **detailed v1 build plan** (`docs/plans/<date>-v1-build.md`), now informed by:
 - the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
 - the shareable format set, fence/resource-state protocol, DirectML/bgfx interop, and GPU-or-CPU camera handoff costs measured in Spike B,
 - the selected face model + measured latency from Spike C.
 
-That second plan implements the modules in `spec/2026-08-15-v1-mvp-design.md` §3, TDD task-by-task.
+That second plan implements the modules in the [v1 MVP design](../architecture/2026-08-15-v1-mvp-design.md) §3, TDD task-by-task.

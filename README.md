@@ -13,7 +13,7 @@ processes your webcam feed in real time and exposes the beautified result as a
 delivers smooth, natural face beautification live, with filters and AR effects,
 and is designed to later output **NDI** for network video streaming.
 
-> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 passed on the Intel Iris Xe reference workstation: Media Foundation virtual-camera API, bgfx Direct3D 12, and ONNX Runtime DirectML all executed successfully. Product implementation has not started. See [the v1 design](spec/2026-08-15-v1-mvp-design.md) and [the measured spike plan](plans/2026-08-15-phase0-spikes.md).
+> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 passed on the Intel Iris Xe reference workstation: Media Foundation virtual-camera API, bgfx Direct3D 12, and ONNX Runtime DirectML all executed successfully. Product implementation has not started. See the [documentation index](docs/README.md).
 
 ## ✨ Planned Features
 
@@ -45,9 +45,10 @@ and is designed to later output **NDI** for network video streaming.
 
 ```
 SparkFace/
-├── docs/                   # User & general documentation
-├── spec/                   # Technical design & specs
-├── plans/                  # Implementation plans
+├── docs/                   # Architecture, development guides, and plans
+│   ├── architecture/       # Product design and durable decisions
+│   ├── development/        # Reproducible developer workflows
+│   └── plans/              # Executable plans and measured verdicts
 ├── src/
 │   ├── app/                # Application & UI (Qt6)
 │   ├── core/               # Engine internals
@@ -66,10 +67,12 @@ SparkFace/
 └── README_zh.md
 ```
 
-## Design & Specs
+## Documentation
 
-- [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) — v1 (MVP) design spec (architecture, module map, C ABI, build system, risks).
-- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) — Phase-0 de-risking spike plan (user-mode virtual camera, GPU interop/handoff, face-model perf).
+- [Documentation index](docs/README.md) — canonical entry point for long-form project documentation.
+- [v1 MVP design](docs/architecture/2026-08-15-v1-mvp-design.md) — architecture, module map, C ABI, build system, and risks.
+- [Phase-0 Windows environment](docs/development/phase0-windows-environment.md) — prerequisites, dependency locks, security constraints, and verified gate output.
+- [Phase-0 spike plan](docs/plans/2026-08-15-phase0-spikes.md) — user-mode virtual camera, GPU interop/handoff, and face-model performance gates.
 
 ## Roadmap
 
@@ -93,6 +96,8 @@ Phase-0 environment gate only (not the product application):
 ```
 
 The script bootstraps the repository-pinned vcpkg tool/registry commit, restores explicitly locked dependencies, configures, builds, and runs the gate. It requires Windows 11 build 22000+, Visual Studio C++ tools, a matching Windows SDK, CMake, Git, and the Visual Studio Ninja component. Smart App Control blocks unsigned local development binaries and does not support per-application exceptions.
+
+See the [Phase-0 Windows environment guide](docs/development/phase0-windows-environment.md) for the complete PASS contract and troubleshooting steps.
 
 ## License
 
