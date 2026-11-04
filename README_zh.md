@@ -5,15 +5,13 @@
 [English](README.md) | **中文**
 
 ![状态](https://img.shields.io/badge/状态-概念阶段-orange)
-![平台](https://img.shields.io/badge/平台-Windows%20(提议)-blue)
+![平台](https://img.shields.io/badge/平台-Windows%2011%2B-blue)
 
 星颜（英文名 **SparkFace**，"闪耀之颜"）是一款桌面端美颜软件：实时处理摄像头画面，并将美化后的结果作为
 **虚拟摄像头** 输出，可供任意视频软件（OBS、Zoom、Teams、Discord 等）调用。它提供自然流畅的实时美颜，
 并支持滤镜与 AR 特效，后续将支持 **NDI** 网络推流。
 
-> **当前状态：** 设计规格已完成——见 [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md)。
-> Phase-0 风险验证 spike 计划已制定——见 [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md)。
-> 实现尚未开始——尚无可运行代码。技术栈与功能范围已在设计 spec 中锁定——见 `spec/2026-08-15-v1-mvp-design.md`。
+> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已完成配置和构建，但当前受管工作站的 Enterprise Code Integrity 策略阻止运行本地未签名程序；正式产品实现尚未开始。详见 [v1 设计](spec/2026-08-15-v1-mvp-design.md) 和 [实测 spike 计划](plans/2026-08-15-phase0-spikes.md)。
 
 ## ✨ 规划功能
 
@@ -29,17 +27,17 @@
 
 | 方向 | 选型 |
 |------|------|
-| 平台 | Windows（优先），后续 macOS |
+| 平台 | Windows 11 build 22000+（v1），macOS v5 |
 | 语言 | C++17 |
 | 采集 | Windows Media Foundation |
 | 渲染/计算 | bgfx（Windows 上 pin D3D12 对齐 DirectML）；自写 shader，算法参考 GPUPixel/GPUImage |
 | 人脸 ML | ONNX Runtime + DirectML EP（轻量关键点模型） |
-| 虚拟摄像头 | 内核态 AVStream minidriver（WDK + EV 证书 attestation 签名） |
-| 输出 | NV12 为主、ARGB 兜底；默认 1080p |
+| 虚拟摄像头 | Windows 11 `MFCreateVirtualCamera` + 自定义 Media Foundation media source（用户态） |
+| 输出 | NV12 为主、BGRA8 兜底；默认 1080p |
 | UI | Qt6（v1）；引擎经 C ABI 与 UI 解耦（WinUI3/SwiftUI 后续） |
 | NDI | NDI® SDK（可选专有插件，核心开源构建外）— SparkFace v4 里程碑 |
 | 构建 | CMake + CMakePresets；依赖混合获取 |
-| License | Apache-2.0；驱动 source-available；Qt6 LGPL 动态链接；NDI 隔离 |
+| License | 核心/虚拟摄像头 Apache-2.0；Qt6 LGPL 动态链接；NDI 隔离 |
 
 ## 项目结构
 
@@ -56,7 +54,7 @@ SparkFace/
 │   │   ├── face/           # ONNX Runtime + DirectML 人脸关键点
 │   │   ├── sinks/          # 输出端接口 + 虚拟摄像头 sink
 │   │   └── presets/        # 分级预设系统
-│   ├── driver/virtualcam/  # 内核态 AVStream minidriver
+│   ├── virtualcam/         # 用户态 MF custom media source + registrar
 │   ├── plugin/ndi/         # NDI 输出插件（SparkFace v4，专有，构建外）
 │   └── c-api/              # C ABI facade（extern "C" + opaque handle）
 ├── CMakeLists.txt
@@ -69,12 +67,12 @@ SparkFace/
 ## 设计与规格
 
 - [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) —— v1（MVP）设计规格（架构、模块图、C ABI、构建系统、风险）。
-- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) —— Phase-0 风险验证 spike 计划（内核驱动、GPU 纹理共享、人脸模型性能）。
+- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) —— Phase-0 风险验证 spike 计划（用户态虚拟摄像头、GPU 互操作/交接、人脸模型性能）。
 
 ## 路线图
 
 - [x] 项目启动与命名
-- [ ] 技术栈确认
+- [ ] Phase-0 可行性验证
 - [ ] 项目脚手架
 - [ ] 摄像头采集与预览
 - [ ] 人脸关键点检测
@@ -86,7 +84,13 @@ SparkFace/
 
 ## 快速开始
 
-> 待补充——待项目结构建立后，将补充脚手架与构建说明。
+仅用于 Phase-0 环境门禁（不是产品应用）：
+
+```powershell
+.\scripts\build-phase0-env.ps1 -Run
+```
+
+脚本会引导仓库锁定的 vcpkg 工具/registry commit、恢复固定依赖、配置、构建并运行门禁。要求 Windows 11 build 22000+、Visual Studio C++ 工具、匹配的 Windows SDK、CMake、Git 和 Visual Studio Ninja 组件。受管设备可能需要企业认可的签名才能执行本地构建的门禁程序。
 
 ## 许可证
 

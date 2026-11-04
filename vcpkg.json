@@ -1,0 +1,8 @@
+{
+  "name": "sparkface-phase0-env",
+  "version-string": "0.0.0",
+  "builtin-baseline": "a4f7741c53c97354fc43222fea17955c657dd549",
+  "dependencies": [
+    "bgfx"
+  ]
+}

@@ -2,191 +2,184 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** De-risk the three load-bearing unknowns of SparkFace v1 (kernel AVStream virtual-camera driver, cross-device GPU texture-sharing + driver readback, face-model iGPU/DirectML perf) via throwaway feasibility probes with hard pass/fail criteria — before writing the detailed v1 build plan.
+**Goal:** De-risk the three load-bearing unknowns of SparkFace v1 (Windows 11 Media Foundation user-mode virtual camera, D3D11↔D3D12 GPU interop and virtual-camera handoff, face-model iGPU/DirectML performance) via throwaway feasibility probes with hard pass/fail criteria — before writing the detailed v1 build plan.
 
-**Architecture:** Three independent throwaway spikes (A: kernel minidriver, B: DXGI cross-device sharing + readback, C: ONNX/DirectML face-model benchmark) plus a shared Task 0 build-environment gate. Each spike produces a **verdict + measured numbers**, NOT reusable code — probe code is discarded after the verdict. Spike outcomes feed a second writing-plans pass that produces the detailed v1 build plan.
+**Architecture:** Three independent throwaway spikes (A: `MFCreateVirtualCamera` + custom media source, B: DXGI cross-device sharing + explicit fence synchronization + camera handoff, C: ONNX/DirectML face-model benchmark) plus a shared Task 0 build-environment gate. Each spike produces a **verdict + measured numbers**, NOT reusable code — probe code is discarded after the verdict. Spike outcomes feed a second writing-plans pass that produces the detailed v1 build plan.
 
-**Tech Stack:** C++17, CMake, Windows 10/11 + WDK, bgfx (D3D12 backend), ONNX Runtime + DirectML EP, Media Foundation, Intel Iris Xe iGPU reference machine.
+**Tech Stack:** C++17, CMake, Windows 11 build 22000+, Windows SDK, Media Foundation virtual-camera API, bgfx (D3D12 backend), ONNX Runtime + DirectML EP, Intel Iris Xe iGPU reference machine.
 
 **Spec:** `spec/2026-08-15-v1-mvp-design.md` (§6.3 mandates these spikes before v1 implementation)
 
 ## Global Constraints
 
-- **Execution environment:** Windows 10/11 with WDK + VS 2022 + CMake + an **iGPU reference machine (Intel Iris Xe)**. This plan CANNOT run on macOS. All `Run:` commands are Windows (PowerShell/cmd).
+- **Execution environment:** Windows 11 build 22000+ with Visual Studio 2022 or newer, Windows SDK 10.0.22000.0+, CMake, and an **iGPU reference machine (Intel Iris Xe)**. This plan CANNOT run on Windows 10 or macOS. All `Run:` commands are Windows (PowerShell/cmd).
 - **License:** Apache-2.0 (core). Spikes are throwaway — probe code is NOT merged into the product; it lives in a temp/scratch location or an isolated branch and is deleted after the verdict.
 - **Language:** C++17; build with CMake + `CMakePresets.json`.
 - **Render backend:** bgfx pinned to its **D3D12** backend on Windows (to align with DirectML, which is D3D12-based). See spec §2.1.
 - **Perf target:** iGPU 30fps = **≤33.3ms/frame** budget (30fps frame time = 33.33ms). Spike B/C measure components of this budget. See spec §2.2.
 - **Dependencies (mixed acquisition, spec §4.1):** bgfx via vcpkg port or FetchContent; ONNX Runtime + DirectML via official prebuilt redist (`Microsoft.ML.OnnxRuntime.DirectML` NuGet unpacked, or the C/C++ redist zip from onnxruntime releases); small libs (gtest) via FetchContent.
-- **Output format/resolution:** target 1080p, NV12 primary / ARGB fallback; DXGI cross-device sharing has format constraints — Spike B confirms the shareable format set. See spec §2.2.
+- **Output format/resolution:** target 1080p, NV12 primary / BGRA8 fallback. Spike A confirms what the Frame Server virtual-camera path and target consumers accept; Spike B confirms which formats can stay GPU-resident across D3D11↔D3D12 boundaries.
 - **Commits:** per git_rules, implementer commits on a `feat/*` branch if agreed upfront at execution start; **push needs separate explicit user consent**. Spike verdicts/findings are recorded in this plan's "Verdict Log" section (added by the executor) regardless of whether probe code is kept.
+- **Decision baseline:** v1 targets Windows 11 build 22000+ and uses the user-mode `MFCreateVirtualCamera` API. A kernel AVStream fallback is out of scope; a Spike A NO-GO stops the plan and triggers a product/OS-support decision instead of silently adding a driver.
 
 ---
 
-### Task 0: Windows Build Environment + iGPU Reference Gate
+### Task 0: Windows 11 Build Environment + iGPU Reference Gate
 
 **Files:**
-- Create: `CMakeLists.txt` (throwaway root, just to gate the toolchain)
-- Create: `CMakePresets.json`
-- Create: `spikes/env/main.cpp` (trivial: prints adapter name + runs one bgfx clear + one DirectML op)
-- Create: `spikes/env/CMakeLists.txt`
+- Create: `CMakeLists.txt` and `CMakePresets.json` (throwaway Phase-0 root)
+- Create: `vcpkg.json` (full Git baseline + bgfx manifest dependency)
+- Create: `scripts/bootstrap-vcpkg.ps1` (bootstraps the same vcpkg tool commit on every developer/CI machine)
+- Create: `scripts/build-phase0-env.ps1` (single configure/build/run entry point)
+- Create: `spikes/env/main.cpp` and `spikes/env/CMakeLists.txt`
 
 **Interfaces:**
 - Consumes: none (first task)
-- Produces: a working Windows build env that can compile+link C++17/CMake, drive bgfx (D3D12), drive ONNX Runtime DirectML, and identify the iGPU adapter. All later spikes depend on this.
+- Produces: a working Windows 11 user-mode build environment that can compile/link C++17/CMake, use the Media Foundation virtual-camera API, drive bgfx (D3D12), drive ONNX Runtime DirectML, and identify the iGPU adapter. All later spikes depend on this.
 
-- [ ] **Step 1: Install prerequisites on the Windows box**
+- [x] **Step 1: Install prerequisites and bootstrap the pinned toolchain**
 
-Install (if absent): Visual Studio 2022 ("Desktop development with C++" + "Universal Windows Platform development" workloads), WDK (matching Windows target), CMake ≥3.27, Git, vcpkg (bootstrap at `C:\vcpkg`).
+Install (if absent): Visual Studio 2022 or newer ("Desktop development with C++" workload), Windows SDK 10.0.22000.0 or newer, CMake ≥3.27, Git, and the Visual Studio Ninja component. `scripts/bootstrap-vcpkg.ps1` reads the full `builtin-baseline` commit from `vcpkg.json`, fetches that exact vcpkg source/tool into ignored `build/tools/vcpkg`, and disables metrics. Developer machines and CI MUST use this script rather than an arbitrary system or Visual Studio-bundled vcpkg. WDK, Qt, and an EV certificate are not Phase-0 prerequisites.
 
-- [ ] **Step 2: Identify the iGPU reference machine + adapter**
+- [x] **Step 2: Confirm the OS floor and iGPU reference adapter**
 
 Run PowerShell:
 ```powershell
+[Environment]::OSVersion.Version
 Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, AdapterRAM
 ```
-Record the Intel Iris Xe adapter name. This machine is the perf reference for Spikes B and C. If only a dGPU exists, STOP and flag to the user — the iGPU-smooth target cannot be validated without an iGPU.
+Require Windows build ≥22000 and record the Intel Iris Xe adapter name. If the OS is older or only a dGPU exists, STOP: the selected virtual-camera API or the iGPU performance promise cannot be validated.
 
-- [ ] **Step 3: Fetch deps (ONNX Runtime DirectML redist + bgfx)**
+- [x] **Step 3: Fetch locked dependencies**
 
-Create `CMakePresets.json` with a `windows-x64-debug` preset (generator "Ninja", MSVC toolset). Acquire:
-- ONNX Runtime DirectML redist: download the C/C++ `onnxruntime-win-x64-dml-*` zip from `https://github.com/microsoft/onnxruntime/releases` (pick the DirectML build), unpack to `spikes/env/ort-dml/`.
-- bgfx: `vcpkg install bgfx` (or FetchContent a known-good bgfx CMake wrapper).
+`vcpkg.json` pins the registry snapshot and resolves bgfx plus transitive ports with triplet `x64-windows` (bgfx remains a static library but uses the dynamic MSVC CRT, matching ONNX Runtime and the later Qt app). CMake downloads ONNX Runtime DirectML from the versioned NuGet URL with an expected SHA-256. `CMakePresets.json` fixes Ninja, Debug, the vcpkg toolchain, and the triplet. The gate records CMake, MSVC, Windows SDK, vcpkg baseline, and ONNX Runtime versions so cross-machine drift is visible.
 
-- [ ] **Step 4: Write the trivial gate program**
+- [x] **Step 4: Write the trivial gate program**
 
-`spikes/env/main.cpp` (throwaway): create a D3D12 device, init bgfx with the D3D12 backend on the iGPU adapter, run one `bgfx::frame`; init an ONNX Runtime DirectML `OrtEnv` + enumerate providers (assert "DirectML" available). Print the adapter name and a pass line.
+`spikes/env/main.cpp` (throwaway): create a D3D12 device and queue on the Intel adapter; initialize bgfx with that external D3D12 context and run one `bgfx::frame`; create an ONNX Runtime session with CPU fallback disabled and execute a pinned Mul model through DirectML; call `MFStartup`; compile/link against `mfplat.lib` and `mfsensorgroup.lib`; verify `MFCreateVirtualCamera` is exported by `mfsensorgroup.dll`. Print toolchain versions, OS build, adapter identity, provider/result, and a pass line. Actual camera registration belongs to Spike A.
 
 - [ ] **Step 5: Build + run**
 
-Run:
+Run only the repository entry point:
 ```powershell
-cmake --preset windows-x64-debug
-cmake --build --preset windows-x64-debug
-.\build\spikes\env\Debug\env_gate.exe
+.\scripts\build-phase0-env.ps1 -Run
 ```
-Expected: prints the Iris Xe adapter name + "DirectML provider available". If "DirectML provider available" is missing, STOP — DirectML on this iGPU is a blocker (spec §6.1 #5/#9).
+Expected: pinned vcpkg bootstrap, successful dependency restore/configure/build, Windows build ≥22000, Intel Iris Xe, D3D12 bgfx frame, `MFCreateVirtualCamera`, a finite DirectML model result with CPU fallback disabled, and `ENV_GATE_PASS`. Missing any item is a blocker.
+
+**Current blocker:** configure and build pass, but Windows Enterprise Code Integrity policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` rejects the unsigned locally-built `env_gate.exe` before process startup. No eligible code-signing certificate is installed. Runtime checks for bgfx, DirectML, and `MFCreateVirtualCamera` therefore remain unexecuted; do not record PASS until the same binary runs on a permitted developer host or receives an enterprise-accepted signature.
 
 - [ ] **Step 6: Record env gate + commit**
 
-Append a one-line verdict ("env gate PASS, Iris Xe adapter=<name>, DirectML available") to the plan's Verdict Log. Commit the env scaffolding on the `feat/*` branch:
+Append `env gate PASS — os_build=<n>, adapter=<name>, MFCreateVirtualCamera=available, bgfx=D3D12, DirectML=<version/result>, cmake=<version>, msvc=<version>, windows_sdk=<version>, vcpkg_baseline=<commit>` to the Verdict Log. Commit the env scaffolding on the `feat/*` branch:
 ```bash
-git add spikes/env CMakeLists.txt CMakePresets.json
-git commit -m "spike(env): windows build env gate (iGPU + DirectML + bgfx)"
+git add .gitignore CMakeLists.txt CMakePresets.json vcpkg.json scripts/bootstrap-vcpkg.ps1 scripts/build-phase0-env.ps1 spikes/env plans/2026-08-15-phase0-spikes.md
+git commit -m "spike(env): gate Windows 11 virtual camera and GPU stack"
 ```
 
 ---
 
-### Task 1: Spike A — Kernel AVStream Minidriver Feasibility (throwaway)
+### Task 1: Spike A — Windows 11 User-Mode Virtual Camera Feasibility (throwaway)
 
 **Files:**
-- Create: `spikes/driver/` (WDK driver project, throwaway — NOT merged into `driver/virtualcam/`)
-- Create: `spikes/driver/testsign.ps1` (test-sign + install script)
-- Create: `spikes/driver/push_frame.cpp` (user-mode frame pusher via DeviceIoControl)
+- Create: `spikes/virtualcam/media-source/` (minimal custom Media Foundation media-source DLL)
+- Create: `spikes/virtualcam/registrar/` (`MFCreateVirtualCamera` register/start/stop/remove utility)
+- Create: `spikes/virtualcam/feeder/` (1080p NV12 test-pattern producer over shared memory)
+- Create: `spikes/virtualcam/CMakeLists.txt`
 
-**Hypothesis:** A minimal AVStream minidriver can be written, test-signed, installed, and recognized by OBS as a camera at 30fps, fed by user-mode frames pushed via `DeviceIoControl`, emitting black frames when no feeder runs. (Spec §2.1, §6.1 #1, §6.3 spike 1.)
+**Hypothesis:** On Windows 11 build 22000+, a custom user-mode Media Foundation source registered through `MFCreateVirtualCamera` can appear as a standard camera in target applications, deliver 1080p NV12 at 30fps, emit black frames when the feeder is absent, and install/remove cleanly without a kernel driver or EV certificate. (Spec §2.1, §6.1 #1, §6.3 spike 1.)
 
 **Interfaces:**
-- Consumes: Task 0 build env (WDK installed).
-- Produces: **Verdict A** — GO / GO-WITH-CAVEAT / NO-GO + measured: (a) does OBS enumerate the device, (b) does OBS display pushed frames at 30fps, (c) does the test-signing flow complete, (d) black-frame-when-idle behavior works, (e) any BSODs. This verdict determines whether the kernel-driver path is viable for v1.
+- Consumes: Task 0 build environment and Media Foundation virtual-camera API availability.
+- Produces: **Verdict A** — GO / GO-WITH-CAVEAT / NO-GO + measured/observed: enumeration and video in OBS plus at least one meeting app, sustained frame rate, accepted media types, feeder-to-source IPC latency/CPU, idle black-frame behavior, restart/reboot persistence, clean removal, permissions/admin requirements, and two-consumer behavior.
 
-- [ ] **Step 1: Clone the WDK AVStream sample as the skeleton**
+- [ ] **Step 1: Reduce Microsoft's official virtual-camera sample**
 
-From the Windows-driver-samples repo, take the `video/avstream/avshws` (AVStream hardware-simulation) sample as the starting skeleton — it already simulates a capture device. Copy it to `spikes/driver/`.
+Use the `microsoft/Windows-Camera` `Samples/VirtualCamera` implementation as the reference, retaining only the custom media-source activation, one video stream, and registrar lifecycle needed by this spike. Do not copy the sample's UI, camera-wrapper modes, or MSI project. Record the upstream commit used.
 
-- [ ] **Step 2: Strip to a single capture pin + ring-buffer fill**
+- [ ] **Step 2: Implement the user-mode frame handoff**
 
-Reduce the sample to one capture pin (NV12, 1920×1080). Replace the hardware-simulation fill with a frame source driven by a user-mode IOCTL: expose a `IOCTL_SPARKFACE_PUSH_FRAME` that copies a caller-supplied 1080p NV12 buffer into the pin's allocated frame buffer. When no IOCTL has arrived within 100ms, fill the frame with black (spec §5.3 engine-off behavior).
+Create a bounded named shared-memory ring (`CreateFileMapping`) plus events and monotonically increasing sequence/timestamps. The feeder writes generated 1920×1080 NV12 frames at 30fps; the Frame Server-hosted media source reads the latest complete slot without blocking its work queue. No per-frame heap allocation. If no fresh frame arrives for 100ms, the source generates black NV12 frames while preserving timestamps and cadence.
 
-- [ ] **Step 3: Add the .inf + catalog**
+- [ ] **Step 3: Register and start the virtual camera**
 
-Create a minimal `.inf` matching the driver's device hardware ID (a root-enumerated device for the spike — `Root\SparkFaceSpike`). Generate the catalog with `inf2cat` (no real signature yet — test-sign next).
+Register the media-source COM activation required by Frame Server, then call `MFCreateVirtualCamera` with `MFVirtualCameraType_SoftwareCameraSource`. Test `MFVirtualCameraAccess_CurrentUser` first; record if machine-wide COM registration or administrator access is still required. Use a stable friendly name and source CLSID so the same camera can be reopened and removed deterministically.
 
-- [ ] **Step 4: Test-sign the driver**
+- [ ] **Step 4: Confirm enumeration and negotiated formats**
 
-Enable test-signing on the dev box: `bcdedit /set testsigning on` (reboot). Build the driver (WDK, `msbuild`/`Build.exe`). Test-sign with a local test cert:
-```powershell
-.\signtool sign /fd SHA256 /s My /n "SparkFace Test" driver.sys
-inf2cat /driver:. /os:10_x64
-signtool sign /fd SHA256 /s My /n "SparkFace Test" driver.cat
-```
+Enumerate the camera through Media Foundation, then open it in OBS and at least one of Zoom/Teams/Discord. Confirm the test pattern renders at 1920×1080, 30fps. Record whether NV12 is accepted end-to-end and which fallback format is required if not.
 
-- [ ] **Step 5: Install the device**
+- [ ] **Step 5: Measure delivery and idle behavior**
 
-Create the root device and install:
-```powershell
-pnputil /add-driver driver.inf /install
-# or use devcon: devcon install driver.inf Root\SparkFaceSpike
-```
+Run for at least 10 minutes. Record achieved fps, dropped/duplicated frames, feeder CPU, media-source CPU, and feeder-write-to-sample timestamp latency. Stop the feeder while consumers remain open; confirm black frames begin within 100ms without freezing or disconnecting. Restart the feeder and confirm recovery without reopening the camera.
 
-- [ ] **Step 6: Write the user-mode frame pusher**
+- [ ] **Step 6: Verify lifecycle, persistence, and cleanup**
 
-`spikes/driver/push_frame.cpp`: open the device, build a test-pattern 1080p NV12 frame, `DeviceIoControl(IOCTL_SPARKFACE_PUSH_FRAME, frame, ...)` at 30fps in a loop. Measure achieved push rate.
+Exercise Start/Stop/Shutdown/Remove, application restart, and one reboot with the chosen lifetime. Confirm there is no orphaned camera or COM registration after removal/uninstall. Record exact privilege requirements.
 
-- [ ] **Step 7: Verify OBS recognition + display**
+- [ ] **Step 7: Verify two consumers**
 
-Launch OBS → add a "Video Capture Device" source → confirm "SparkFace Spike" appears → select → confirm the test-pattern frames render at ~30fps. Then kill the pusher (leave device installed) → confirm OBS shows black frames (not a freeze/error) within ~100ms.
+Open the camera concurrently in OBS and one meeting app. Confirm both receive valid frames or record the precise Frame Server limitation. Multi-consumer failure is GO-WITH-CAVEAT only if v1 explicitly narrows its contract; otherwise it is NO-GO.
 
-- [ ] **Step 8: Verify no BSOD across the run**
+- [ ] **Step 8: Record Verdict A + throw away**
 
-Check Windows reliability/dispatcher for any bugcheck during Steps 5-7. `Get-WinEvent -LogName System | Where-Object Id -eq 1001` (bugcheck) should be empty for the spike window.
+Append: `Spike A: <GO|GO-WITH-CAVEAT|NO-GO> — apps=<list>, 1080p30=<yes/no>, formats=<list>, feeder_to_sample_ms=<x>, cpu=<x%>, idle_black=<yes/no>, restart=<yes/no>, reboot_persistence=<yes/no>, clean_remove=<yes/no>, admin_required=<yes/no>, two_consumers=<yes/no>`.
 
-- [ ] **Step 9: Record Verdict A + throw away**
-
-Append to Verdict Log: `Spike A: <GO|GO-WITH-CAVEAT|NO-GO> — OBS enumerate=<yes/no>, 30fps display=<yes/no>, test-sign flow=<ok/fail>, idle black frames=<yes/no>, BSOD=<none/N count>`. Delete `spikes/driver/` probe code (or leave on an isolated branch, NOT merged). Commit the verdict-log update only:
+Delete `spikes/virtualcam/` probe code (or leave it on an isolated branch, NOT merged). Commit the verdict-log update only:
 ```bash
 git add plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(A): kernel AVStream driver feasibility verdict"
+git commit -m "spike(A): Windows user-mode virtual camera verdict"
 ```
 
 ---
 
-### Task 2: Spike B — Cross-Device Texture Sharing + Driver Readback (throwaway)
+### Task 2: Spike B — D3D11↔D3D12 Sharing, Fence Synchronization, and Camera Handoff (throwaway)
 
 **Files:**
 - Create: `spikes/sharing/main.cpp` (throwaway probe)
 - Create: `spikes/sharing/CMakeLists.txt`
 
-**Hypothesis:** On the Iris Xe iGPU, a texture can flow copy-free across the chain MF-capture-D3D11 → DirectML-D3D12 → bgfx-D3D12 via DXGI shared handles (NT handle + keyed mutex), and the final frame can be GPU→CPU read back + pushed via a stub IOCTL at 30fps within the budget. (Spec §2.1, §6.1 #2, §6.3 spike 2.)
+**Hypothesis:** On the Iris Xe iGPU, frames can remain GPU-resident through MF-capture-D3D11 → DirectML-D3D12 → bgfx-D3D12 using NT shared handles, explicit shared fences, and a documented resource-state contract. The Windows 11 custom media source can then consume a GPU-backed `IMFSample`; if Frame Server rejects that path, one measured GPU→CPU readback plus the Spike A shared-memory handoff still fits the 30fps budget. (Spec §2.1, §6.1 #2, §6.3 spike 2.)
 
 **Interfaces:**
-- Consumes: Task 0 env (bgfx D3D12 + ONNX RT DirectML on the iGPU). Spike A's real driver is NOT required — use a stub shared-surface in place of the kernel driver to keep this spike independent.
-- Produces: **Verdict B** — GO / GO-WITH-CAVEAT / NO-GO + measured: (a) copy-free round-trip confirmed (pattern written on device X read correctly on device Y, no per-frame CPU copy in the GPU path), (b) keyed-mutex sync cost per hop (ms), (c) final GPU→CPU readback cost @1080p (ms), (d) which DXGI formats are shareable across the D3D11↔D3D12 hops, (e) multi-GPU same-adapter confirmation (all three devices on the Iris Xe adapter), (f) total GPU-pipeline+readback cost vs the ≤33.3ms budget.
+- Consumes: Task 0 GPU stack and Spike A's accepted virtual-camera media types/IPC contract. It does not consume Spike A probe code.
+- Produces: **Verdict B** — GO / GO-WITH-CAVEAT / NO-GO + measured: copy-free GPU path, working shared formats, D3D11↔D3D12 fence and resource-state protocol, synchronization cost, DirectML I/O-binding behavior, bgfx native-resource access, GPU-backed virtual-camera sample support, fallback readback+IPC cost, same-adapter confirmation, and total cost against ≤33.3ms.
 
-- [ ] **Step 1: Force all D3D devices onto the iGPU adapter**
+- [ ] **Step 1: Force all GPU components onto the iGPU adapter**
 
-Enumerate adapters, pick the Intel Iris Xe by name (from Task 0 Step 2). Create the D3D11 capture device, the DirectML D3D12 device, and the bgfx D3D12 device **all on that same adapter** (spec §6.1 #7). If you cannot place them on the same adapter, that is a NO-GO finding for hybrid laptops — record it.
+Enumerate adapters and select the Intel Iris Xe by LUID. Create the D3D11 capture device, DirectML D3D12 device/queue, and bgfx D3D12 device on that adapter. Assert matching adapter LUIDs. A component that cannot be placed on the same adapter is a NO-GO finding for the copy-free design.
 
-- [ ] **Step 2: Confirm the shareable format set**
+- [ ] **Step 2: Confirm resource-sharing formats and APIs**
 
-For candidate formats (NV12, BGRA8, RGBA8, R8), attempt `ID3D11Device::CreateTexture2D` with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | KEYEDMUTEX` and open on the D3D12 side via `ID3D12Device::OpenSharedHandle1`. Record which formats succeed — this is the format set the v1 output/intermediate textures must use (spec §2.2).
+For NV12, BGRA8, RGBA8, and R8, create D3D11 textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`, export with `IDXGIResource1::CreateSharedHandle`, and open on D3D12 with `ID3D12Device::OpenSharedHandle`. Record creation/open success, required flags, row/layout constraints, and whether a shared heap or committed resource is exposed. Do not use the nonexistent `OpenSharedHandle1` API.
 
-- [ ] **Step 3: Write the copy-free round-trip probe**
+- [ ] **Step 3: Define and prove synchronization/state ownership**
 
-`spikes/sharing/main.cpp`: write a known pattern (e.g., per-pixel coordinate) into a shared NV12/BGRA texture on the D3D11 capture device → acquire keyed mutex → read on the DirectML D3D12 device (run a trivial ORT session reading the texture as input tensor) → read on the bgfx D3D12 device (run one compute pass) → assert the pattern is intact at the end (no CPU copy was made — verify by timing + by checking no `Map`/staging-buffer CPU touch in the hot path).
+Use an `ID3D12Fence` shared handle and `ID3D11Device5::OpenSharedFence` where supported. Define, in the probe, which component owns the resource, the fence value before/after each hop, and the D3D12 state on entry/exit. Run a known-pattern round trip for 1,000 frames and validate contents after GPU completion. Do not treat `IDXGIKeyedMutex` as the D3D12 synchronization primitive.
 
-- [ ] **Step 4: Measure keyed-mutex + sharing overhead**
+- [ ] **Step 4: Prove DirectML and bgfx interop**
 
-Time N=1000 iterations of the acquire/release across the 2-3 hops; divide for per-frame cost. Record `keyed_mutex_per_hop_ms`.
+Bind the shared resource to ONNX Runtime DirectML through supported device-memory/I/O-binding APIs and run a trivial model without `Map` or a staging upload in the per-frame GPU path. Import or access the resulting D3D12 resource through bgfx's supported native-resource interface and run one compute pass. Record any hidden copy or API limitation as a caveat or NO-GO.
 
-- [ ] **Step 5: Measure the final GPU→CPU readback + stub-IOCTL push**
+- [ ] **Step 5: Test GPU-backed Media Foundation samples**
 
-After the bgfx compute pass, read the output texture back to CPU (`Map` a staging texture) and write the bytes into a stub ring buffer (simulating the DeviceIoControl push from Spike A). Time it at 1080p NV12. Record `readback_plus_push_ms`.
+Wrap the final DXGI surface with `MFCreateDXGISurfaceBuffer`, place it in an `IMFSample`, and deliver it from a reduced custom media source using the media type accepted by Spike A. Verify the camera in OBS and inspect whether Frame Server preserves the GPU surface or forces a copy/conversion. Record support and cost per format.
 
-- [ ] **Step 6: Confirm bgfx native handle extraction works**
+- [ ] **Step 6: Measure the CPU fallback only if required**
 
-Use bgfx's native-handle interop to get the underlying D3D12 resource from a bgfx texture (the v1 driver handoff depends on this). If bgfx cannot expose the native D3D12 handle for sharing, record as a GO-WITH-CAVEAT (the v1 design's handoff would need a workaround).
+If the GPU-backed sample path is unsupported or unstable, read the final 1080p frame into a persistently allocated staging/readback buffer and publish it through the bounded shared-memory ring from Spike A. Measure readback, copy/IPC, and media-source delivery separately. No per-frame allocation.
 
-- [ ] **Step 7: Sum against the budget**
+- [ ] **Step 7: Measure sustained end-to-end overhead**
 
-Sum measured (capture-simulated ~2-4 + keyed-mutex + DirectML-trivial + bgfx-trivial + readback) and compare to the spec §2.2 budget table. Record whether the GPU-pipeline+readback portion fits the iGPU 30fps envelope. (Face ML and beauty passes are measured in Spike C / a later build; here we measure the sharing/overhead floor.)
+After warm-up, run at least 1,000 frames and then a 10-minute 1080p30 soak. Record per-hop fence wait/signal cost, DirectML binding/inference floor, bgfx pass, virtual-camera handoff, p50/p95/p99 frame cost, dropped frames, and total against the 33.3ms envelope.
 
 - [ ] **Step 8: Record Verdict B + throw away**
 
-Append to Verdict Log: `Spike B: <verdict> — copy_free=<yes/no>, formats_shared=<list>, keyed_mutex_per_hop_ms=<x>, readback_push_ms=<y>, bgfx_native_handle=<exposed/not>, same_adapter=<yes/no>, fits_30fps_envelope=<yes/provisional/no>`. Delete `spikes/sharing/`. Commit verdict-log update:
+Append: `Spike B: <verdict> — copy_free_gpu=<yes/no>, formats=<list>, fence_protocol=<ok/fail>, sync_p95_ms=<x>, dml_binding=<direct/copy>, bgfx_native=<yes/no>, camera_gpu_sample=<yes/no>, fallback_readback_ipc_ms=<x|n/a>, same_adapter=<yes/no>, total_p95_ms=<x>, fits_30fps=<yes/no>`.
+
+Delete `spikes/sharing/`. Commit the verdict-log update:
 ```bash
 git add plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(B): cross-device texture sharing + readback verdict"
+git commit -m "spike(B): GPU sharing and virtual-camera handoff verdict"
 ```
 
 ---
@@ -242,15 +235,16 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 
 *(Executor appends each spike's verdict here as tasks complete. All three verdicts GO = proceed to the second writing-plans pass for the detailed v1 build plan. Any NO-GO = stop and report to the user before planning.)*
 
-- [Task 0 env gate verdict]
-- [Spike A verdict]
-- [Spike B verdict]
-- [Spike C verdict]
+- Task 0 env gate: **BLOCKED** — build PASS (`CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, `vcpkg baseline a4f7741c53c97354fc43222fea17955c657dd549`, `bgfx 1.129.8940-496#1`, `ONNX Runtime DirectML 1.24.4`); host prechecks PASS (`Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, SDK/runtime files for `MFCreateVirtualCamera` present); execution BLOCKED before process start by Enterprise Code Integrity policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`; bgfx/DirectML/MF runtime verdict pending.
+- [Spike A — Windows user-mode virtual camera verdict]
+- [Spike B — GPU sharing/fence/camera-handoff verdict]
+- [Spike C — face model verdict]
 
 ## Gate to v1 Build Plan
 
-After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with documented workarounds): invoke `superpowers:writing-plans` again to write the **detailed v1 build plan** (`plans/<date>-v1-build.md`), now informed by:
-- the exact driver handoff mechanism confirmed in Spike A,
-- the shareable format set + measured sharing/readback costs from Spike B,
+After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with explicitly accepted product constraints): invoke `superpowers:writing-plans` again to write the **detailed v1 build plan** (`plans/<date>-v1-build.md`), now informed by:
+- the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
+- the shareable format set, fence/resource-state protocol, DirectML/bgfx interop, and GPU-or-CPU camera handoff costs measured in Spike B,
 - the selected face model + measured latency from Spike C.
+
 That second plan implements the modules in `spec/2026-08-15-v1-mvp-design.md` §3, TDD task-by-task.

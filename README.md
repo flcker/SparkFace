@@ -5,7 +5,7 @@
 **English** | [中文](README_zh.md)
 
 ![Status](https://img.shields.io/badge/status-concept-orange)
-![Platform](https://img.shields.io/badge/platform-Windows%20(proposed)-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%2011%2B-blue)
 
 SparkFace (Chinese: **星颜**, "sparkling face") is a desktop beauty application that
 processes your webcam feed in real time and exposes the beautified result as a
@@ -13,10 +13,7 @@ processes your webcam feed in real time and exposes the beautified result as a
 delivers smooth, natural face beautification live, with filters and AR effects,
 and is designed to later output **NDI** for network video streaming.
 
-> **Status:** Design spec complete — see [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md).
-> A Phase-0 de-risking spike plan is created — see [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md).
-> Implementation has not started; there is no runnable code yet. The tech stack
-> and feature scope are locked in the design spec — see `spec/2026-08-15-v1-mvp-design.md`.
+> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 configures and builds successfully; execution is currently blocked on this managed workstation by Enterprise Code Integrity policy. Product implementation has not started. See [the v1 design](spec/2026-08-15-v1-mvp-design.md) and [the measured spike plan](plans/2026-08-15-phase0-spikes.md).
 
 ## ✨ Planned Features
 
@@ -32,17 +29,17 @@ and is designed to later output **NDI** for network video streaming.
 
 | Area | Choice |
 |------|--------|
-| Platform | Windows (first), macOS later |
+| Platform | Windows 11 build 22000+ (v1), macOS v5 |
 | Language | C++17 |
 | Capture | Windows Media Foundation |
 | Render/compute | bgfx (D3D12 on Windows, pinned to align DirectML); self-write shaders, referencing GPUPixel/GPUImage |
 | Face ML | ONNX Runtime + DirectML EP (lightweight landmark model) |
-| Virtual camera | Kernel-mode AVStream minidriver (WDK + EV cert attestation signing) |
-| Output | NV12 primary, ARGB fallback; 1080p default |
+| Virtual camera | Windows 11 `MFCreateVirtualCamera` + custom Media Foundation source (user-mode) |
+| Output | NV12 primary, BGRA8 fallback; 1080p default |
 | UI | Qt6 (v1); engine UI-agnostic via C ABI (WinUI3/SwiftUI later) |
 | NDI | NDI® SDK (optional proprietary plugin, out of core open build) — SparkFace v4 milestone |
 | Build | CMake + CMakePresets; mixed dependency acquisition |
-| License | Apache-2.0; driver source-available; Qt6 LGPL dynamic link; NDI isolated |
+| License | Apache-2.0 core/virtual camera; Qt6 LGPL dynamic link; NDI isolated |
 
 ## Project Structure
 
@@ -59,7 +56,7 @@ SparkFace/
 │   │   ├── face/           # ONNX Runtime + DirectML face landmarks
 │   │   ├── sinks/          # Output sink interface + virtual-cam sink
 │   │   └── presets/        # Graded-level preset system
-│   ├── driver/virtualcam/  # Kernel AVStream minidriver
+│   ├── virtualcam/         # User-mode MF custom media source + registrar
 │   ├── plugin/ndi/         # NDI output plugin (SparkFace v4, proprietary, out-of-core)
 │   └── c-api/              # C ABI facade (extern "C" + opaque handle)
 ├── CMakeLists.txt
@@ -72,12 +69,12 @@ SparkFace/
 ## Design & Specs
 
 - [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md) — v1 (MVP) design spec (architecture, module map, C ABI, build system, risks).
-- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) — Phase-0 de-risking spike plan (kernel driver, GPU texture sharing, face-model perf).
+- [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) — Phase-0 de-risking spike plan (user-mode virtual camera, GPU interop/handoff, face-model perf).
 
 ## Roadmap
 
 - [x] Project kickoff & naming
-- [ ] Tech stack confirmation
+- [ ] Phase-0 feasibility validation
 - [ ] Project scaffold
 - [ ] Webcam capture & preview
 - [ ] Face landmark detection
@@ -89,8 +86,13 @@ SparkFace/
 
 ## Getting Started
 
-> TBD — scaffold and build instructions will be added once the project structure
-> is in place.
+Phase-0 environment gate only (not the product application):
+
+```powershell
+.\scripts\build-phase0-env.ps1 -Run
+```
+
+The script bootstraps the repository-pinned vcpkg tool/registry commit, restores locked dependencies, configures, builds, and runs the gate. It requires Windows 11 build 22000+, Visual Studio C++ tools, a matching Windows SDK, CMake, Git, and the Visual Studio Ninja component. Managed machines may require an enterprise-approved signature to execute the locally-built gate.
 
 ## License
 
