@@ -8,7 +8,7 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 
 | Area | Document | Purpose |
 |---|---|---|
-| Architecture / 架构 | [v1 MVP design](architecture/2026-08-15-v1-mvp-design.md) | Product scope, architecture, C ABI, performance targets, risks |
+| Specifications / 规格 | [v1 MVP design](specs/2026-08-15-v1-mvp-design.md) | Product scope, architecture, C ABI, performance targets, risks |
 | Development / 开发 | [Phase-0 Windows environment](development/phase0-windows-environment.md) | Prerequisites, dependency locks, build command, security constraints, verified result |
 | Plans / 计划 | [Phase-0 spikes](plans/2026-08-15-phase0-spikes.md) | Executable feasibility plan and measured verdict log |
 
@@ -22,7 +22,7 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 
 ## Documentation Rules / 文档规则
 
-- Architecture documents record durable product decisions and constraints.
+- Specification documents record durable product decisions and constraints.
 - Plans use a `YYYY-MM-DD-<topic>.md` filename and contain executable acceptance criteria.
 - Measured results belong in the relevant plan's verdict log; do not replace measurements with estimates.
 - Development guides document only commands that have been exercised on the supported workstation.

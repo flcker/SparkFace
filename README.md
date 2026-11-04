@@ -45,8 +45,8 @@ and is designed to later output **NDI** for network video streaming.
 
 ```
 SparkFace/
-├── docs/                   # Architecture, development guides, and plans
-│   ├── architecture/       # Product design and durable decisions
+├── docs/                   # Specifications, development guides, and plans
+│   ├── specs/              # Product specifications and durable decisions
 │   ├── development/        # Reproducible developer workflows
 │   └── plans/              # Executable plans and measured verdicts
 ├── src/
@@ -70,7 +70,7 @@ SparkFace/
 ## Documentation
 
 - [Documentation index](docs/README.md) — canonical entry point for long-form project documentation.
-- [v1 MVP design](docs/architecture/2026-08-15-v1-mvp-design.md) — architecture, module map, C ABI, build system, and risks.
+- [v1 MVP design](docs/specs/2026-08-15-v1-mvp-design.md) — product scope, architecture, module map, C ABI, build system, and risks.
 - [Phase-0 Windows environment](docs/development/phase0-windows-environment.md) — prerequisites, dependency locks, security constraints, and verified gate output.
 - [Phase-0 spike plan](docs/plans/2026-08-15-phase0-spikes.md) — user-mode virtual camera, GPU interop/handoff, and face-model performance gates.
 

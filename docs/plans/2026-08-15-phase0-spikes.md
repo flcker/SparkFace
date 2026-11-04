@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++17, CMake, Windows 11 build 22000+, Windows SDK, Media Foundation virtual-camera API, bgfx (D3D12 backend), ONNX Runtime + DirectML EP, Intel Iris Xe iGPU reference machine.
 
-**Spec:** [v1 MVP design](../architecture/2026-08-15-v1-mvp-design.md) (§6.3 mandates these spikes before v1 implementation)
+**Spec:** [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) (§6.3 mandates these spikes before v1 implementation)
 
 ## Global Constraints
 
@@ -247,4 +247,4 @@ After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with explicitly accepted
 - the shareable format set, fence/resource-state protocol, DirectML/bgfx interop, and GPU-or-CPU camera handoff costs measured in Spike B,
 - the selected face model + measured latency from Spike C.
 
-That second plan implements the modules in the [v1 MVP design](../architecture/2026-08-15-v1-mvp-design.md) §3, TDD task-by-task.
+That second plan implements the modules in the [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) §3, TDD task-by-task.

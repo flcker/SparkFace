@@ -100,5 +100,5 @@ Disabling Smart App Control is system-wide and reduces protection against unknow
 
 ## Related Documents
 
-- [v1 MVP design](../architecture/2026-08-15-v1-mvp-design.md)
+- [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md)
 - [Phase-0 spike plan and verdict log](../plans/2026-08-15-phase0-spikes.md)

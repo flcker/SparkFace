@@ -43,8 +43,8 @@
 
 ```
 SparkFace/
-├── docs/                   # 架构、开发指南和计划
-│   ├── architecture/       # 产品设计与长期决策
+├── docs/                   # 规格、开发指南和计划
+│   ├── specs/              # 产品规格与长期决策
 │   ├── development/        # 可复现的开发流程
 │   └── plans/              # 可执行计划与实测结论
 ├── src/
@@ -68,7 +68,7 @@ SparkFace/
 ## 文档
 
 - [文档索引](docs/README.md) —— 项目长篇文档的统一入口。
-- [v1 MVP 设计](docs/architecture/2026-08-15-v1-mvp-design.md) —— 架构、模块图、C ABI、构建系统和风险。
+- [v1 MVP 设计](docs/specs/2026-08-15-v1-mvp-design.md) —— 产品范围、架构、模块图、C ABI、构建系统和风险。
 - [Phase-0 Windows 环境](docs/development/phase0-windows-environment.md) —— 前置条件、依赖锁定、安全约束和已验证输出。
 - [Phase-0 spike 计划](docs/plans/2026-08-15-phase0-spikes.md) —— 用户态虚拟摄像头、GPU 互操作/交接和人脸模型性能门禁。
 

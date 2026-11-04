@@ -7,7 +7,7 @@ Windows 11-first (build 22000+); macOS deferred to v5. Bilingual (Chinese + Engl
 
 > This is a practical "how to work in this repo" guide, not a full spec. The
 > canonical documentation entry point is [docs/README.md](docs/README.md). For
-> design detail see the [v1 MVP design](docs/architecture/2026-08-15-v1-mvp-design.md).
+> design detail see the [v1 MVP design](docs/specs/2026-08-15-v1-mvp-design.md).
 > The [Phase-0 de-risking spike plan](docs/plans/2026-08-15-phase0-spikes.md)
 > must pass before the detailed v1 build plan is written.
 
