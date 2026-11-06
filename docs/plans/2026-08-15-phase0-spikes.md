@@ -92,35 +92,35 @@ git commit -m "spike(env): gate Windows 11 virtual camera and GPU stack"
 - Consumes: Task 0 build environment and Media Foundation virtual-camera API availability.
 - Produces: **Verdict A** — GO / GO-WITH-CAVEAT / NO-GO + measured/observed: enumeration and video in OBS plus at least one meeting app, sustained frame rate, accepted media types, feeder-to-source IPC latency/CPU, idle black-frame behavior, restart/reboot persistence, clean removal, permissions/admin requirements, and two-consumer behavior.
 
-- [ ] **Step 1: Reduce Microsoft's official virtual-camera sample**
+- [x] **Step 1: Reduce Microsoft's official virtual-camera sample**
 
 Use the `microsoft/Windows-Camera` `Samples/VirtualCamera` implementation as the reference, retaining only the custom media-source activation, one video stream, and registrar lifecycle needed by this spike. Do not copy the sample's UI, camera-wrapper modes, or MSI project. Record the upstream commit used.
 
-- [ ] **Step 2: Implement the user-mode frame handoff**
+- [x] **Step 2: Implement the user-mode frame handoff**
 
 Create a bounded named shared-memory ring (`CreateFileMapping`) plus events and monotonically increasing sequence/timestamps. The feeder writes generated 1920×1080 NV12 frames at 30fps; the Frame Server-hosted media source reads the latest complete slot without blocking its work queue. No per-frame heap allocation. If no fresh frame arrives for 100ms, the source generates black NV12 frames while preserving timestamps and cadence.
 
-- [ ] **Step 3: Register and start the virtual camera**
+- [x] **Step 3: Register and start the virtual camera**
 
 Register the media-source COM activation required by Frame Server, then call `MFCreateVirtualCamera` with `MFVirtualCameraType_SoftwareCameraSource`. Test `MFVirtualCameraAccess_CurrentUser` first; record if machine-wide COM registration or administrator access is still required. Use a stable friendly name and source CLSID so the same camera can be reopened and removed deterministically.
 
-- [ ] **Step 4: Confirm enumeration and negotiated formats**
+- [x] **Step 4: Confirm enumeration and negotiated formats**
 
 Enumerate the camera through Media Foundation, then open it in OBS and at least one of Zoom/Teams/Discord. Confirm the test pattern renders at 1920×1080, 30fps. Record whether NV12 is accepted end-to-end and which fallback format is required if not.
 
-- [ ] **Step 5: Measure delivery and idle behavior**
+- [x] **Step 5: Measure delivery and idle behavior**
 
 Run for at least 10 minutes. Record achieved fps, dropped/duplicated frames, feeder CPU, media-source CPU, and feeder-write-to-sample timestamp latency. Stop the feeder while consumers remain open; confirm black frames begin within 100ms without freezing or disconnecting. Restart the feeder and confirm recovery without reopening the camera.
 
-- [ ] **Step 6: Verify lifecycle, persistence, and cleanup**
+- [x] **Step 6: Verify lifecycle, persistence, and cleanup**
 
 Exercise Start/Stop/Shutdown/Remove, application restart, and one reboot with the chosen lifetime. Confirm there is no orphaned camera or COM registration after removal/uninstall. Record exact privilege requirements.
 
-- [ ] **Step 7: Verify two consumers**
+- [x] **Step 7: Verify two consumers**
 
 Open the camera concurrently in OBS and one meeting app. Confirm both receive valid frames or record the precise Frame Server limitation. Multi-consumer failure is GO-WITH-CAVEAT only if v1 explicitly narrows its contract; otherwise it is NO-GO.
 
-- [ ] **Step 8: Record Verdict A + throw away**
+- [x] **Step 8: Record Verdict A + throw away**
 
 Append: `Spike A: <GO|GO-WITH-CAVEAT|NO-GO> — apps=<list>, 1080p30=<yes/no>, formats=<list>, feeder_to_sample_ms=<x>, cpu=<x%>, idle_black=<yes/no>, restart=<yes/no>, reboot_persistence=<yes/no>, clean_remove=<yes/no>, admin_required=<yes/no>, two_consumers=<yes/no>`.
 
@@ -236,7 +236,7 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 *(Executor appends each spike's verdict here as tasks complete. All three verdicts GO = proceed to the second writing-plans pass for the detailed v1 build plan. Any NO-GO = stop and report to the user before planning.)*
 
 - Task 0 env gate: **GO** — `Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, `MFCreateVirtualCamera` available, bgfx `1.129.8940-496#1` selected Direct3D 12, ONNX Runtime DirectML `1.24.4` returned finite output `2` with CPU fallback disabled, `CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, vcpkg baseline `a4f7741c53c97354fc43222fea17955c657dd549`; `ENV_GATE_PASS` observed.
-- [Spike A — Windows user-mode virtual camera verdict]
+- Spike A: **NO-GO** — reference=`microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df`; apps=`OBS Studio 33.0.0, Tencent Meeting 3.47.2.405`; `1080p30=yes`; formats=`NV12 (YUY2 also advertised)`; 10-minute run=`18000 samples, 30.00 fps, 3 duplicate frames`; feeder-to-sample latency=`57.99 ms average, 65.14 ms p95`; CPU=`feeder 1.27% of one core, Frame Server 15% sampled`; idle black=`yes, 66.32 ms`; feeder recovery without reopen=`yes`; app restart=`yes`; reboot persistence=`yes`; clean remove=`yes`; privileges=`current-user camera, but probe's HKLM COM registration made install/remove admin-only`; single-consumer OBS=`1920x1080 NV12, 30 fps, 360-frame recording with zero OBS render/output skips`; single-consumer Tencent Meeting=`device selected and frames rendered`; two consumers=`no` — OBS-first caused Tencent Meeting “camera capture data exception”; Tencent-first left OBS receiving only idle frames. Because the v1 contract has not explicitly excluded concurrent consumers, Step 7 classifies this as NO-GO. Probe code deleted after recording this verdict.
 - [Spike B — GPU sharing/fence/camera-handoff verdict]
 - [Spike C — face model verdict]
 
