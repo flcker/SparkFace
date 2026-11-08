@@ -1,6 +1,6 @@
 # SparkFace Phase-0 Spike A2 — Frame Server Multi-Consumer Recovery Plan
 
-**Status:** Completed — **NO-GO**; real applications still fail concurrent capture
+**Status:** Completed — **GO-WITH-CAVEAT** accepted for v1 single-consumer scope; real-application concurrency is deferred
 **Date:** 2026-11-06  
 **Spec:** [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md)  
 **Predecessor:** [Phase-0 spikes — Spike A verdict](2026-08-15-phase0-spikes.md#verdict-log)
@@ -14,7 +14,7 @@ This is a corrective feasibility spike, not product implementation. It must eith
 1. prove simultaneous OBS + meeting-app delivery with measured latency and stable lifecycle, changing Spike A to **GO**; or
 2. produce a precise, reproducible blocker and preserve Spike A as **NO-GO**.
 
-Spike B, Spike C, and the detailed v1 build plan remain blocked until A2 reaches GO. A GO-WITH-CAVEAT verdict is allowed only after an explicit product decision changes the v1 multi-consumer contract.
+On 2026-11-08 the product owner explicitly narrowed v1 to one virtual-camera device with one active consuming application at a time. This converts the measured concurrency NO-GO into an accepted **GO-WITH-CAVEAT** and unblocks Spike B, Spike C, and subsequent v1 planning once those spikes pass.
 
 ## Why A2 Exists
 
@@ -246,6 +246,8 @@ admin_install=<yes/no>, admin_runtime=<yes/no>, upstream=<commit>
 
 **Recorded result:** `Spike A2: NO-GO — shared_attribute=yes, source_instances=2 diagnostic / second real-app source never reached running, apps=OBS Studio 33.0.0 + Tencent Meeting 3.47.2.405, activation_orders=fail/fail, 1080p30=yes for either app alone, internal_handoff_p95_ms=0.274, frame_server_delivery_p95_ms=28.390, duplicates=428, skipped=431, idle_black_ms<=50.7, recovery=yes, restart=yes, reboot=not-needed, clean_remove=yes, admin_install=yes, admin_runtime=no, upstream=626f8b19c5f367602f2e89c6b314573d3776c9df`.
 
+**Accepted product decision (2026-11-08):** v1 exposes one virtual-camera device and supports one active consuming application at a time. The recorded A2 result remains the evidence that same-device concurrency is unsupported; it is no longer a v1 acceptance criterion. Multi-consumer support is deferred post-v1 without a committed version or implementation route. The v1 specification, root READMEs, compatibility matrix, documentation index, and original Phase-0 verdict log were updated accordingly.
+
 - [x] Delete `spikes/virtualcam-a2/` and ignored probe artifacts.
 - [x] Retain only plan/verdict documentation and any explicitly approved durable spec change.
 - [x] Commit the verdict on the feature branch.
@@ -272,14 +274,14 @@ Any mandatory GO criterion fails after the official source contract and broadcas
 
 ### GO-WITH-CAVEAT
 
-A2 cannot choose this outcome by itself. If multi-consumer still fails, GO-WITH-CAVEAT requires explicit user approval to change the v1 contract, followed by updates to:
+A2 cannot choose this outcome by itself. The product owner explicitly approved the required v1 contract change on 2026-11-08:
 
-- the v1 MVP specification;
-- README product claims;
-- compatibility matrix and tests;
-- the original Phase-0 verdict log.
+- v1 exposes one virtual-camera device;
+- one consuming application may use it at a time;
+- concurrent consumers are deferred post-v1;
+- the v1 specification, README product claims, compatibility matrix, tests, and original Phase-0 verdict log reflect the restriction.
 
-Without that product decision, multi-consumer failure remains NO-GO.
+Therefore A2 closes as **GO-WITH-CAVEAT** while preserving its measured concurrency failure.
 
 ## Stop Conditions
 
@@ -291,4 +293,4 @@ Stop and report before continuing when any of these occurs:
 - internal handoff p95 remains above 3ms after queueing is removed;
 - cleanup leaves an orphaned PnP device or COM registration.
 
-Do not proceed to Spike B/C or write the v1 implementation plan while a stop condition is active.
+The real-application concurrency stop condition fired and was recorded. After the explicit 2026-11-08 contract decision, it no longer blocks Spike B/C because concurrency is outside v1 scope; all other stop conditions remain binding.
