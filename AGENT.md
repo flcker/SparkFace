@@ -3,13 +3,13 @@
 Open-source (Apache-2.0) commercial desktop beauty camera app. Real-time webcam
 beautification rendered to a virtual camera, exposed as a standard video device
 that OBS / Zoom / Teams / Discord / DingTalk / Tencent Meeting can consume.
-Windows-first; macOS deferred to v5. Bilingual (Chinese + English) from day one.
+Windows 11-first (build 22000+); macOS deferred to v5. Bilingual (Chinese + English) from day one.
 
-> This is a practical "how to work in this repo" guide, not a full spec. For
-> design detail see [spec/2026-08-15-v1-mvp-design.md](spec/2026-08-15-v1-mvp-design.md).
-> The Phase-0 de-risking spike plan is
-> [plans/2026-08-15-phase0-spikes.md](plans/2026-08-15-phase0-spikes.md) — those
-> spikes must pass before the detailed v1 build plan is written.
+> This is a practical "how to work in this repo" guide, not a full spec. The
+> canonical documentation entry point is [docs/README.md](docs/README.md). For
+> design detail see the [v1 MVP design](docs/specs/2026-08-15-v1-mvp-design.md).
+> The [Phase-0 de-risking spike plan](docs/plans/2026-08-15-phase0-spikes.md)
+> must pass before the detailed v1 build plan is written.
 
 ## Tech Stack
 
@@ -20,9 +20,9 @@ Windows-first; macOS deferred to v5. Bilingual (Chinese + English) from day one.
 | Capture | Windows Media Foundation (incl. MJPEG decode) |
 | Render / compute | bgfx, pinned to **D3D12** on Windows (aligns with DirectML) |
 | Face ML | ONNX Runtime + DirectML EP, lightweight landmark model |
-| Virtual camera | Kernel-mode AVStream minidriver (WDK + EV cert attestation signing) |
+| Virtual camera | Windows 11 `MFCreateVirtualCamera` + custom Media Foundation source (user-mode) |
 | UI | Qt6 (v1); engine is UI-agnostic via the C ABI |
-| Driver toolchain | WDK (separate build track from the app) |
+| Virtual-camera deployment | Custom media-source DLL + registrar, packaged with the app; no kernel driver |
 
 ## Module Map
 
@@ -35,8 +35,7 @@ src/
 │   ├── face/            # ONNX Runtime + DirectML EP, face landmarks.
 │   ├── sinks/           # Output sink interface + virtual-cam sink (v1).
 │   └── presets/         # Level / preset / custom three-tier system.
-├── driver/
-│   └── virtualcam/      # Kernel-mode AVStream minidriver.
+├── virtualcam/           # User-mode MF custom media source + registrar + frame-transport consumer.
 ├── plugin/
 │   └── ndi/             # NDI output (SparkFace v4 milestone; NDI® SDK, optional proprietary plugin, out-of-core open build).
 └── c-api/               # Public C ABI facade (extern "C" + opaque handle).
@@ -75,22 +74,18 @@ all three UI toolkits consume.
 NDI SDK is **optional and proprietary** — pulled in only when
 `SPARKFACE_BUILD_NDI=ON`, and never enters the open-source build.
 
-## Build Tracks (two independent, plus an NDI opt-in)
+## Build Targets (one user-mode track, plus an NDI opt-in)
 
-1. **User-mode app + core** — CMake + the dependency mix above. The standard
-   track.
-2. **Kernel driver** (`driver/virtualcam`) — **WDK toolchain**, produces `.sys`
-   + `.inf` + `.cat`, decoupled from the app (the app does not link the driver;
-   the installer installs it). A separate WDK sub-build.
-3. **NDI plugin** (optional) — proprietary; built into track 1 only when opted
-   in. Not in the open-source artifact.
+1. **User-mode app + core + virtual camera** — CMake + the dependency mix above.
+   `virtualcam` builds as a custom media-source DLL plus registrar executable and
+   shares only a narrow frame-transport contract with `core/sinks`.
+2. **NDI plugin** (optional) — proprietary; built into the user-mode track only
+   when opted in. Not in the open-source artifact.
 
 ## License
 
-- **Core:** Apache-2.0.
-- **Driver:** source-available — source is open, but without an EV certificate
-  you cannot produce a newly attestation-signed, installable binary. We
-  distribute the pre-signed `.sys`.
+- **Core, C API, and virtual camera:** Apache-2.0. Preserve the upstream license
+  and attribution for code derived from Microsoft's Windows-Camera sample.
 - **Qt6:** LGPL via dynamic link (obligation: provide object files / relink
   instructions).
 - **NDI:** isolated in `plugin/ndi`, never linked into the core build.
@@ -99,16 +94,16 @@ CI runs reuse/SPDX license audits from day one.
 
 ## Platform
 
-Windows-first. macOS is a **v5** milestone (bgfx Metal backend + CoreMediaIO
-virtual camera). Do not add macOS codepaths now — the render-backend abstraction
-is a door left open, not yet built.
+v1 requires Windows 11 build 22000+ because it uses `MFCreateVirtualCamera`.
+Windows 10 is out of scope. macOS is a **v5** milestone (bgfx Metal backend +
+CoreMediaIO virtual camera). Do not add Windows 10 or macOS codepaths now.
 
 ## Performance Target
 
 **iGPU (Intel Iris Xe) @ 30fps smooth** at default 1080p is the load-bearing
 promise. Total frame budget is ~33.3ms across capture + decode + face ML +
-beauty pass + driver readback + sync + jitter — see spec §2.2 for the
-breakdown. 60fps is dGPU-recommended / iGPU-best-effort, **not** a promise.
+beauty pass + GPU synchronization + virtual-camera handoff + jitter — see spec
+§2.2 for the breakdown. 60fps is dGPU-recommended / iGPU-best-effort, **not** a promise.
 Budget must be **measured** on the iGPU reference machine, not estimated.
 
 ## Workflow Notes

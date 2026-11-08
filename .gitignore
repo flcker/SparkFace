@@ -3,6 +3,7 @@ build/
 out/
 cmake-build*/
 CMakeCache.txt
+vcpkg_installed/
 CMakeFiles/
 cmake_install.cmake
 compile_commands.json

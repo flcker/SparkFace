@@ -1,6 +1,6 @@
 # SparkFace v1（MVP）设计规格
 
-> 状态：设计稿（经两轮独立 subagent 审核修订），待 review · 日期：2026-08-15 · License：Apache-2.
+> 状态：Phase-0 修订版，待 spike 实测确认 · 初稿：2026-08-15 · 修订：2026-11-04 · License：Apache-2.0
 
 ## 0. 概述
 
@@ -10,7 +10,7 @@ SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理�
 - **首发场景优先级**：直播/推流 + 内容录制 优先；实时视频通话/会议 后置（延迟要求更严，后续阶段再压）。
 - **首发市场**：中英双语并重。
 
-> MVP 阶段虚拟摄像头的任务只是"做一个 OBS 能识别的视频设备"，这在两市场是同一段代码，双语不会让驱动工作量翻倍，主要加 i18n + 双分发渠道。因市场而异的重活（Zoom/Teams vs 钉钉/腾讯会议 的 app 兼容）落在后期通话阶段。
+> MVP 阶段虚拟摄像头的任务是“做一个 OBS 和主流会议软件能识别的视频设备”。v1 最低系统为 Windows 11 build 22000，使用系统用户态虚拟摄像头 API；双语主要增加 i18n 与双分发渠道，消费端兼容矩阵仍须实机验证。
 
 ## 1. 范围
 
@@ -20,7 +20,7 @@ SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理�
 - 人脸：轻量人脸关键点模型（ONNX Runtime + DirectML EP）
 - 自然美颜效果：磨皮（双边滤波 + 肤肤 mask）、提亮、瘦脸（网格形变）、大眼（网格形变）
 - 分级预设系统：分级(level) / 预置(style) / 自定义 三层控制
-- 虚拟摄像头输出：内核态 AVStream minidriver
+- 虚拟摄像头输出：Windows 11 `MFCreateVirtualCamera` + 自定义 Media Foundation media source（用户态）
 - UI：Qt6 前端壳，中英 i18n
 - 性能：iGPU（Iris Xe）@30fps 流畅（默认）；fps 可设
 
@@ -48,33 +48,36 @@ SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理�
         • 提亮(色彩 shader)
         • 瘦脸/大眼(网格顶点位移, 关键点驱动)
    → 处理后输出纹理(bgfx, GPU)
-   → [输出端: 虚拟摄像头] 末帧 GPU→CPU 读回(~1-2ms) → 用户态经 DeviceIoControl 推内核共享环形缓冲
-        → 内核态 AVStream minidriver → OBS 等识别为摄像头
+   → [输出端: Windows 用户态虚拟摄像头]
+        → 首选：DXGI surface → MFCreateDXGISurfaceBuffer → IMFSample
+        → 实测兜底：一次 GPU→CPU 读回 → 有界共享内存 ring
+        → 自定义 Media Foundation source → Windows Frame Server → OBS 等
    ↑ 控制回路: Qt6 UI(C ABI) 下发 level / fps / 效果参数
 ```
 
-### 2.1 GPU device 与纹理共享拓扑（iGPU 30fps 生死线）
+### 2.1 GPU device、同步与虚拟摄像头交接（iGPU 30fps 生死线）
 
-- **共享链里三个用户态 D3D device 实例**：MF 采集 device（D3D11，源纹理持有者）+ DirectML 的 D3D12 device（人脸 ML）+ bgfx 渲染 device（D3D12，**pin 以对齐 DirectML**）。我们拥有后两个计算 device，MF 的 D3D11 是源纹理的共享参与方。内核驱动**不持有 GPU device**（AVStream minidriver 是内核态）。
-- **GPU 管线内**（采集→人脸→美颜）纹理经 **DXGI 共享句柄（NT handle + keyed mutex）** 跨 device 流转，**全程不下 GPU 显存、零逐帧 CPU 拷贝**。
-- **驱动交接处必然一次 GPU→CPU 读回**：内核 minidriver 无法直接持有 D3D11 纹理句柄，标准做法（OBS Virtual Cam 同理）是用户态把末帧读回系统内存 → 经 `DeviceIoControl` 推进驱动的共享环形缓冲。读回成本 ~1-2ms@1080p，已计入预算（§2.2）。
-- 链路：采集纹理(MF→D3D11) → 共享给 DirectML device 跑人脸 → 共享回 bgfx device 做美颜 → 末帧 GPU→CPU 读回 → IOCTL 进内核驱动。
-- **#1 集成风险**，早期 spike 验证（见 §6）。**决定**：bgfx 在 Windows pin 到 D3D12 后端以与 DirectML 对齐（都 D3D12，共享最顺）。spike 验证的是"GPU 管线 copy-free + 驱动读回/IOCTL 推送"能否 @30fps 跑通，而非 D3D12 选择本身。
+- **共享链里三个用户态 D3D device 实例**：MF 采集 device（D3D11，源纹理持有者）+ DirectML 的 D3D12 device（人脸 ML）+ bgfx 渲染 device（D3D12，pin 以对齐 DirectML）。虚拟摄像头同样是用户态 custom media source，由 Windows Frame Server 激活。
+- **GPU 管线内**（采集→人脸→美颜）通过 DXGI NT shared handle 共享资源；D3D11↔D3D12 同步使用共享 `ID3D12Fence`（D3D11 侧通过 `ID3D11Device5::OpenSharedFence`）和明确的资源状态/所有权协议，不把 `IDXGIKeyedMutex` 当作 D3D12 同步原语。目标是零逐帧 CPU 拷贝，须由 Spike B 证明。
+- **虚拟摄像头交接首选 GPU surface**：末帧包装为 `MFCreateDXGISurfaceBuffer`/`IMFSample` 交给 custom media source。Frame Server 是否保留 GPU surface、支持哪些格式，必须实测，不能先验宣称零拷贝。
+- **兜底仅在实测需要时启用**：若 GPU-backed sample 不受支持或不稳定，使用持久分配的 readback buffer + 有界命名共享内存 ring；不允许逐帧分配。Spike B 单独量出读回、IPC 和 media-source delivery 成本。
+- **链路**：采集纹理(MF/D3D11) → shared handle + fence → DirectML/D3D12 → bgfx/D3D12 → GPU-backed MF sample，或经一次实测兜底读回 → custom media source → Frame Server。
+- **#1 集成风险**，早期 spike 验证（见 §6）。bgfx 在 Windows pin 到 D3D12；Spike B 决定最终 camera handoff，不在设计阶段伪定零拷贝或必然读回。
 
 ### 2.2 帧预算（iGPU Iris Xe @30fps, 33ms, 默认 1080p）
 
 | 阶段 | 预算（粗估，spike 实测确认） |
 |------|------|
 | 采集 + MJPEG 解码（若摄像头出 MJPEG） | ~0-6ms（原生 NV12/YUY2 省回解码；解码输出格式须可 DXGI 共享） |
-| 跨 device 同步（keyed mutex acquire/release ×2-3 hop） | ~1-3ms |
+| 跨 device fence 同步 + resource transition | ~1-3ms |
 | 人脸 ML（轻量模型） | ~5-8ms |
 | 美颜 pass | ~6-10ms |
-| 驱动交接（GPU→CPU 读回 + IOCTL 推送） | ~1-2ms |
-| present/vsync + OS 调度抖动 | ~2-4ms |
+| 虚拟摄像头交接 | ~0-3ms（GPU-backed sample 为目标；读回+共享内存为实测兜底） |
+| Frame Server / OS 调度抖动 | ~2-4ms |
 
-合计粗估落在 18-33ms 区间——**高端已贴 30fps 帧时间(33.3ms)、零安全余量，各阶段须落在中低段**，spike 是这条预算能否成立的载重验证。爆预算按 §6.1 #3 兜底。
+粗估合计约 14-34ms；高端已超过 30fps 帧时间(33.3ms)，没有可假定的安全余量。各阶段必须在 Iris Xe 上实测，爆预算按 §6.1 #3 兜底。
 
-**输出分辨率/格式**：默认 1080p；输出格式集 **NV12 为主**（虚拟摄像头消费端兼容最广）、ARGB 兜底。**DXGI 跨 device 共享有格式约束**（非所有 DXGI 格式可跨 D3D11/D3D12 共享），spike 确认可共享格式集。
+**输出分辨率/格式**：默认 1080p；**NV12 为主、BGRA8 兜底**。Spike A 确认 Frame Server 与消费端接受的格式，Spike B 确认 D3D11↔D3D12 共享及 GPU-backed sample 可用的交集。
 
 ## 3. 模块、C ABI、项目结构
 
@@ -88,11 +91,10 @@ src/
 │   │   └── pipeline/         # 帧编排
 │   ├── capture/           # Media Foundation 采集 → D3D11 共享纹理
 │   ├── face/              # ONNX Runtime + DirectML EP，轻量人脸关键点
-│   ├── sinks/             # 输出端接口 + virtual-cam sink 实现(v1)
+│   ├── sinks/             # 输出端接口 + virtual-camera producer(v1)
 │   └── presets/           # 分级预设系统
-├── driver/                # 驱动(合并同类)
-│   └── virtualcam/        # 内核态 AVStream minidriver
-├── plugin/                # 插件(合并同类)
+├── virtualcam/            # MF custom media source + registrar + 独立 frame-transport consumer
+├── plugin/
 │   └── ndi/               # NDI(v4，专有，core 构建外)
 └── c-api/                 # 对外 C ABI facade(extern "C" + opaque handle)
 ```
@@ -103,14 +105,14 @@ core 暴露 `extern "C"` + opaque handle（如 `sf_engine_t*`）。Qt6 app 只�
 
 - **生命周期**：`sf_init(...)` → `sf_start(h)` → … → `sf_stop(h)` → `sf_shutdown(h)`；opaque handle 由 `sf_init` 返回、`sf_shutdown` 释放。
 - **线程契约**（三种 UI 工具包都必须遵守）：引擎在自有线程跑采集/处理；C ABI 所有调用**线程安全**，可从 UI 线程直接调；**回调（预览帧就绪等）在引擎线程触发**，UI 侧必须 marshal 回 UI 线程后再碰 widget。
-- **预览路径**：引擎提供专用预览回调 `sf_register_preview_callback(h, fn, userdata)`，每处理帧就绪回调一次。回调载荷**默认是 GPU 共享预览纹理句柄**（UI 直接渲染、零拷贝）；`sf_preview_query_format` 可查是否支持像素-buffer 模式（给不能导入 GPU 句柄的 UI 兜底）。**不**走"再订阅虚拟摄像头"那条往返内核的弯路。
+- **预览路径**：引擎提供专用预览回调 `sf_register_preview_callback(h, fn, userdata)`，每处理帧就绪回调一次。回调载荷**默认是 GPU 共享预览纹理句柄**（UI 直接渲染、零拷贝）；`sf_preview_query_format` 可查是否支持像素-buffer 模式（给不能导入 GPU 句柄的 UI 兜底）。预览不经过 Frame Server 虚拟摄像头路径。
 - **摄像头选择**：`sf_enum_cameras(h, ...) → count` + `sf_select_camera(h, index)`。
 - **错误模型**：所有 C ABI 函数返回 `sf_result_t`（int 枚举：`SF_OK` / `SF_ERR_*`）；`sf_init` 失败返回 NULL；非法参数返回 `SF_ERR_INVALID_ARG`，设备/模型不可用返回对应码。
 - **ABI 版本**：头文件带 `SF_ABI_VERSION` 宏 + `sf_query_abi_version()`；新增效果/参数走加法不破坏消费者，破坏性变更 bump major。
 
 ### 3.2 依赖方向
 
-`app → c-api → core 各模块`；driver 与 plugin 经共享 surface / 插件接口与 core 解耦。引擎内部模块不互依 UI。
+`app → c-api → core 各模块`；`core/sinks` 的 producer 与 `virtualcam` media source 只共享窄的 frame-transport 协议，media source 不链接整个 engine；plugin 经插件接口与 core 解耦。引擎内部模块不互依 UI。
 
 ## 4. 构建系统与项目管理
 
@@ -128,25 +130,25 @@ core 暴露 `extern "C"` + opaque handle（如 `sf_engine_t*`）。Qt6 app 只�
 
 - 开源核心 vs 完整构建：CMake option `SPARKFACE_BUILD_NDI=OFF`（默认，开源产物干净）/ `ON`（装 NDI SDK 才编 `plugin/ndi`）。
 
-### 4.2 两条独立构建轨道（驱动不能并入 app 构建）
+### 4.2 构建目标
 
-- ① 用户态 app+core：CMake + 依赖，常规
-- ② 内核驱动 `driver/virtualcam`：**WDK 工具链**编 .sys + .inf + .cat，与 app 解耦（app 不 link 驱动，安装器装）。WDK 子构建
-- ③ 可选 NDI 插件：专有，仅轨道① opt-in 时编，不进开源产物
+- ① 用户态 app + core + `virtualcam`：CMake + 依赖，MSVC x64；virtual-camera media source 是独立 DLL target，registrar 是独立 executable target
+- ② 可选 NDI 插件：专有，仅在 `SPARKFACE_BUILD_NDI=ON` 时编译，不进默认开源产物
 
-### 4.3 驱动签名与分发
+v1 没有内核驱动构建轨道，不需要 `.sys`、`.inf`、`.cat`、EV 证书或微软硬件门户 attestation。
 
-驱动 source 开源、签名证书机密。release 用 EV 证书经微软硬件门户 attestation 签名出 .cat；**release 包携带已签名驱动二进制**（用户无需自签），与开源 source 并存——标准做法（OBS Virtual Cam 同理）。**诚实口径**：驱动是 source-available——用户可读/改源码，但无 EV 证书无法重新 attestation 签名出可装机的新二进制；实际使用靠我们分发的已签名 .sys。核心 app 部分（不含驱动）可自由构建。
+### 4.3 虚拟摄像头安装与分发
+
+安装器部署 custom media-source DLL 和 registrar，注册 COM activation，然后通过 `MFCreateVirtualCamera` 创建摄像头。卸载必须先 `IMFVirtualCamera::Remove`，再注销 media source 并删除文件。CurrentUser/AllUsers、COM 注册位置、是否需要管理员权限及重启恢复策略由 Spike A 实测后写入正式 v1 计划。
 
 ### 4.4 打包发布
 
-WiX(MSI) 安装器捆绑 app + 已签名驱动（PnPUtil 装 .sys+.inf）；macOS 后续 pkg/notarize。版本号遵循 git_rules（SemVer `vX.Y.Z[-rc.N]`，gray rc → prod）。
+WiX(MSI) 安装器捆绑 app、custom media-source DLL 与 registrar；macOS 后续使用 pkg/notarize。版本号遵循 git_rules（SemVer `vX.Y.Z[-rc.N]`，gray rc → prod）。
 
 ### 4.5 CI/CD（GitHub Actions）
 
-- PR：build(MSVC) + 单测 + clang-format/tidy lint + license 合规(reuse)
-- 驱动签名/打包 = release workflow，走 secrets（EV 证书不入公开 CI）
-- iGPU 30fps 性能门禁 CI 跑不了（无 iGPU runner）→ self-hosted iGPU runner 或手动回归
+- PR：build(MSVC) + 单测 + custom media-source contract tests + clang-format/tidy lint + license 合规(reuse)
+- 虚拟摄像头消费端兼容和 iGPU 30fps 门禁无法在普通公共 CI 可靠执行 → self-hosted Windows 11 iGPU runner 或合入前手动回归
 
 ### 4.6 代码质量
 
@@ -209,74 +211,76 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 
 | # | 风险 | 去风险 |
 |---|------|--------|
-| 1 | **内核态 AVStream 驱动 + 签名**：Windows 无用户态虚拟摄像头 API，必须内核 minidriver；EV 证书 + 微软门户 attestation；跨机兼容 finicky | **实现第一步前置 spike**：throwaway 最小 minidriver，验证 OBS 能识别 + 签名流程端到端跑通 + 用户态 DeviceIoControl 推帧 + 引擎未运行时输出黑帧，再铺开管线 |
-| 2 | **跨 device 纹理共享链 + 驱动读回**：GPU 管线内须 copy-free（MF D3D11→DirectML D3D12→bgfx D3D12 经 DXGI 共享句柄），驱动交接处一次 GPU→CPU 读回 + IOCTL 推送 = iGPU 30fps 生死线 | **早期 spike**：iGPU 参考机测 GPU 管线 copy-free + 末帧读回/IOCTL 推送 @30fps；确认 bgfx-D3D12 与 DirectML-D3D12 无拷贝共享、bgfx 取原生句柄 |
-| 3 | **iGPU 30fps 预算**（Iris Xe @33ms 跑采集+解码+人脸+美颜+读回+同步+抖动）= 最难承诺，高端零安全余量 | iGPU 参考机从 day1 当性能门禁；预算**实测非估**；爆预算兜底：换更轻人脸模型/降人脸检测频率(隔帧)/降 24fps |
-| 4 | **bgfx compute + 原生句柄交接**未验（双边 compute 多遍 + 取 D3D12 原生句柄交驱动） | 早期 spike：bgfx D3D12 下双边 compute on iGPU + 取原生句柄 |
-| 5 | **人脸模型选型**（轻到 iGPU DirectML ~5-8ms、关键点够 face-reshape"自然"） | benchmark 候选（MediaPipe 468-pt ONNX / 68/106/190-pt 轻）on iGPU DirectML；取最轻且达质；兜底更轻 |
-| 6 | **"自然不塑料"质量天花板**（自写双边+肤 mask+face-reshape 不塑料） | 真人脸素材早做视觉验证；调预置对照参考(GPUPixel/GPUImage 输出)做 sanity |
-| 7 | **多 GPU 拓扑**：混合本(iGPU+dGPU)三个用户态 device 须同一 adapter 否则 DXGI 共享断；切 dGPU(60fps)逼 iGPU 采集纹理跨 adapter 拷贝，违背 copy-free | 优先单 adapter(iGPU)跑全链；dGPU 路线接受跨 adapter 拷贝或把采集也搬 dGPU(若摄像头可路由)，spike 验 |
-| 8 | **MJPEG 解码**：很多摄像头只出 MJPEG，MF 解码加延迟且输出格式须可 DXGI 共享 | 预算计入解码(§2.2)；spike 验 MJPEG 解码输出格式可共享，否则转 CPU 上传或找 HW 解码路径 |
-| 9 | **运行时边角**：iGPU 持续负载热降频 / Win11 摄像头隐私指示灯交互 / 多消费者(OBS+Zoom 同时读虚拟摄像头) | 热降频：perf 门禁测持续负载 5-10min(非瞬态)；隐私指示灯：测 Win11 下 app 兼容；多消费者：驱动支持多 pin/多读，测并发消费 |
+| 1 | **Windows 11 user-mode virtual camera**：custom media source 由 Frame Server 激活，涉及 COM 注册、生命周期、隐私权限、格式协商和消费端差异 | **实现第一步前置 Spike A**：基于微软官方 VirtualCamera sample 的最小 source，验证 OBS + 至少一个会议 app、1080p30、黑帧、重启/重启系统、清理、权限及双消费者 |
+| 2 | **跨 device GPU 链 + camera handoff**：D3D11→D3D12 共享、fence/state ownership、DirectML/bgfx interop、Frame Server 是否保留 GPU surface 都未验 | **Spike B**：NT shared handle + shared fence；验证 DirectML I/O binding、bgfx native resource、`MFCreateDXGISurfaceBuffer`；不通才测一次 readback + shared-memory fallback |
+| 3 | **iGPU 30fps 预算**（Iris Xe @33ms 跑采集+解码+人脸+美颜+handoff+调度）没有安全余量 | iGPU 参考机从 day1 当性能门禁；预算实测非估；爆预算兜底：更轻模型、隔帧检测或 24fps |
+| 4 | **bgfx compute + 原生资源交接**未验 | Spike B 在 D3D12 下运行 compute，验证支持的 native-resource 接口及是否隐藏复制 |
+| 5 | **人脸模型选型**（轻到 iGPU DirectML ~5-8ms、关键点够 face-reshape“自然”） | benchmark MediaPipe 468-pt ONNX 与轻量 68/106/190-pt 候选；选最轻达标模型并指定 fallback |
+| 6 | **“自然不塑料”质量天花板** | 真人脸素材早做视觉验证；调预置并对照 GPUPixel/GPUImage 输出做 sanity |
+| 7 | **多 GPU 拓扑**：三个 device 不在同一 adapter 时共享链可能失效 | v1 优先同 adapter(iGPU)；Spike B 按 adapter LUID 断言；dGPU 60fps 路线后置 |
+| 8 | **MJPEG 解码**：解码延迟及输出格式可能破坏共享链 | 预算计入解码；验证硬解输出格式，否则明确测量转换成本 |
+| 9 | **运行时边角**：热降频、摄像头隐私、Frame Server 重启、多消费者 | 10 分钟 soak、隐私开关、Frame Server 恢复、OBS+会议 app 并发消费实测 |
 
 ### 6.2 发布/合规风险
 
 | # | 风险 | 去风险 |
 |---|------|--------|
-| 10 | **EV 证书 + 硬件门户**（~$300-400/年 + attestation lead time） | 尽早采购 EV 证书 + 注册 MS 硬件 dashboard，别到首发才卡 |
-| 11 | **license 合规**（核心 Apache-2.0 干净、NDI 隔离、Qt6 LGPL 动态链接义务） | CI 从 day1 跑 reuse/SPDX 审计；核实 Qt6 LGPL 义务（提供目标文件/可重链说明） |
-| 12 | macOS 移植(v5)：D3D12→Metal（bgfx 有 Metal 后端，渲染 OK）+ 驱动 AVStream→CoreMediaIO（macOS 专属硬骨头） | v1 不处理；v5 立项，渲染后端抽象已留门 |
+| 10 | **Windows 11 build 22000+ 系统下限**缩小可安装范围 | README、安装器与运行时门禁明确系统要求；若将来恢复 Windows 10，作为单独产品决策重新评估 backend，不在 v1 隐式兼容 |
+| 11 | **license 合规**（核心 Apache-2.0、微软 sample 派生代码许可证、NDI 隔离、Qt6 LGPL 动态链接义务） | 记录 sample 上游 commit/license；CI 从 day1 跑 reuse/SPDX；文档化 Qt6 LGPL 义务 |
+| 12 | macOS 移植(v5)：D3D12→Metal + Windows virtual camera→CoreMediaIO | v1 不处理；v5 立项，渲染后端抽象已留门 |
 
-### 6.3 实现首批三件 throwaway spike（writing-plans 阶段排为前置）
+### 6.3 实现首批三件 throwaway spike（正式实现前置）
 
-1. 内核驱动可行性（OBS 识别 + 签名流程 + 用户态 DeviceIoControl 推帧 + 引擎未运行时黑帧输出）
-2. 跨 device 纹理共享链 + 驱动读回（iGPU copy-free GPU 管线 + 末帧 GPU→CPU 读回/IOCTL 推送 + bgfx 原生句柄 + 多 GPU 同 adapter 约束 + 可共享格式集）
-3. 人脸模型 iGPU DirectML 性能（含 #5 选型）
+1. Windows 11 用户态虚拟摄像头（注册、Frame Server custom media source、共享内存 feeder、格式/消费端、黑帧、生命周期、双消费者）
+2. D3D11↔D3D12 GPU 共享与 camera handoff（shared handle + fence/state contract + DirectML/bgfx + GPU-backed MF sample；必要时测 readback fallback）
+3. 人脸模型 iGPU DirectML 性能与质量选型
 
-三件 spike 过了，再按 writing-plans 铺开 v1 正式实现。
+三件 spike 通过后，再编写 v1 正式实现计划。
 
 ## 7. 测试与验证
 
-分层：GoogleTest/Catch2 单测为基（CI 跑）；perf/driver/visual 三类需实机（self-hosted 或手动）。
+分层：GoogleTest/Catch2 单测为基（CI 跑）；perf/virtual-camera/visual 三类需 Windows 11 实机（self-hosted 或手动）。
 
 1. **单测（CI）**
    - filters：双边滤波正确性(合成输入验像素统计)、face-reshape 形变数学(关键点→位移)、提亮/白平衡增量
    - presets：level→参数向量映射、预置 load/save(JSON 往返)、override 解析(level 基准+单效果 override→最终向量)、override 生命周期(切 level 保留/切预置清零)
    - c-api：ABI 行为(level/fps/effect-param get/set、opaque handle 生命周期、线程安全、错误码)
+   - virtualcam：media-source stream state、时间戳/帧率、格式协商、黑帧状态、frame-transport ring 边界
    - 无人脸降级逻辑(无脸/关键点不稳定时瘦脸/大眼禁用、磨皮留全帧)
-2. **集成（本地实机）**：合成视频文件当"摄像头"，跑 capture→face→beauty→virtualcam sink 全链验输出帧；驱动侧 test harness 读虚拟摄像头输出断言分辨率/帧率/格式
-3. **性能门禁（iGPU 参考机 Iris Xe，最关键）**：测每阶段延迟，30fps 默认全开效果@1080p；**门禁 = 总 ≤33.3ms(30fps 帧时间 33.33ms)**，附预算分解；**测持续负载 5-10min**(非瞬态，验热降频)；回归按 commit 触发(self-hosted iGPU runner 或合入前手动)；24/30 在 iGPU 测(承诺线)，60 尽力(报告不门禁)
-4. **驱动兼容矩阵（最风险外表面）**：已签名虚拟摄像头在 OBS(两市场首要) + Zoom/Teams/Discord/钉钉/腾讯会议(识别基础) 被识别且帧正确；跨 Win10/11、GPU 厂商(Intel iGPU / NVIDIA / AMD dGPU)、单/混合 GPU 拓扑；MSI(PnPUtil) 装/卸干净；**多消费者并发**(OBS+Zoom 同时读)
-5. **视觉质量验证（"自然不塑料"）**：真人脸素材库(多肤色/性别/眼镜/运动)；按预置 level 人工视觉评审；对照 GPUPixel/GPUImage 输出做 sanity；无人脸/多人/半脸/遮挡侧脸边角
+2. **集成（本地实机）**：合成视频文件当输入，跑 capture→face→beauty→virtualcam producer→custom media source 全链；测试消费者断言分辨率/帧率/格式
+3. **性能门禁（Iris Xe）**：测每阶段延迟，30fps 默认全开效果@1080p；总 p95 ≤33.3ms；持续负载 10min 验热降频；24/30 为承诺线，60 只报告不门禁
+4. **虚拟摄像头兼容矩阵**：Windows 11 支持版本上，OBS + Zoom/Teams/Discord/钉钉/腾讯会议识别与帧正确；Intel/NVIDIA/AMD、单/混合 GPU；安装/卸载无残留；OBS+会议 app 双消费者并发
+5. **视觉质量验证**：真人脸素材库覆盖多肤色/性别/眼镜/运动；按 level 人工评审；无人脸/多人/半脸/遮挡/侧脸边角
 6. **i18n**：中英串加载、无硬编码用户可见串、CJK 字体渲染(UI+叠加)
-7. **license 合规（CI）**：reuse/SPDX 扫描，核心无 GPL 污染、Qt6 LGPL 义务文档化
-8. **smoke 回归**：每支持配置跑 app 启动→摄像头开→level 切→fps 切→退出
-9. **预览路径 + 引擎离线**：预览回调帧率达标、回调在引擎线程触发、UI marshal 正确不卡顿；引擎未运行时虚拟摄像头输出黑帧、不卡消费端
+7. **license 合规（CI）**：reuse/SPDX 扫描，核心无 GPL 污染、微软 sample 归属正确、Qt6 LGPL 义务文档化
+8. **smoke 回归**：app 启动→摄像头开→level/fps 切换→虚拟摄像头消费→退出
+9. **预览路径 + 引擎离线**：预览回调帧率与线程契约正确；feeder 停止时虚拟摄像头持续黑帧，恢复 feeder 后无需重开消费者
 
 ## 8. 技术栈总表
 
 | 方向 | 选型 |
 |------|------|
-| 平台 | Windows 优先（macOS v5） |
+| 平台 | Windows 11 build 22000+（macOS v5） |
 | 核心语言 | C++17 |
 | 采集 | Windows Media Foundation（含 MJPEG 解码） |
 | 渲染/计算后端 | bgfx（Windows pin D3D12 对齐 DirectML）；自写 shader，算法参考 GPUPixel/GPUImage |
 | 人脸 ML | ONNX Runtime + DirectML EP，轻量人脸关键点模型 |
-| 虚拟摄像头 | 内核态 AVStream minidriver（WDK + EV 证书 attestation 签名；用户态 DeviceIoControl 推帧） |
-| 输出格式 | NV12 为主、ARGB 兜底；默认 1080p |
+| 虚拟摄像头 | `MFCreateVirtualCamera` + custom Media Foundation source（用户态） |
+| 输出格式 | NV12 为主、BGRA8 兜底；默认 1080p |
 | UI | Qt6（v1）；引擎经 C ABI 与 UI 解耦，未来可换 WinUI3/SwiftUI |
 | AR/合成层（v3） | tgfx 候选 |
 | NDI（v4） | NDI® SDK，可选专有插件，核心开源构建外 |
 | 构建 | CMake + CMakePresets；依赖混合获取（Qt6/ONNX RT 预编译+find_package，bgfx vcpkg/FetchContent，小库 FetchContent） |
 | 依赖管理 | 非单一工具，按依赖取最合适方式 |
-| License | Apache-2.0；驱动 source-available（签名二进制由我们分发）；NDI 隔离；Qt6 LGPL 动态链接 |
-| CI | GitHub Actions（build/单测/lint/license）；驱动签名+打包走 release workflow secrets；iGPU 性能 self-hosted/手动 |
+| License | Apache-2.0；NDI 隔离；Qt6 LGPL 动态链接；微软 sample 派生代码保留上游归属 |
+| CI | GitHub Actions（build/单测/lint/license）；虚拟摄像头兼容与 iGPU 性能走 self-hosted/手动 |
 
 ## 9. 延迟/后置决策
 
 - **bgfx 自抽象/封装 API**：以后再说。day1 用 bgfx 薄封装；需要 Metal/Vulkan 后端、或 GL 性能不能满足、或想换后端时再做自抽象。
 - **tgfx**：v3 AR/合成层候选，届时评估。
 - **NDI**：v4 可选专有插件；或后续用 SRT/WebRTC 纯开源替代做网络推流。
+- **Windows 10**：v1 明确不支持；若未来有市场需求，单独评估 backend，不为其保留内核驱动占位。
 - **通话场景延迟压低**：v5（macOS + 通话 app 兼容）阶段再处理，v1 不压通话延迟。
 - **人脸模型最终选型**：spike benchmark 后定（MediaPipe 468-pt vs 更轻 68/106/190-pt）。
 - **dGPU 60fps 路线**：跨 adapter 拷贝权衡留 spike，v1 不承诺集显 60 流畅。
