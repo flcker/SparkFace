@@ -1,16 +1,16 @@
 # SparkFace v1（MVP）设计规格
 
-> 状态：Phase-0 修订版，待 spike 实测确认 · 初稿：2026-08-15 · 修订：2026-11-04 · License：Apache-2.0
+> 状态：Phase-0 修订版，Spike A/A2 已接受单消费者限制 · 初稿：2026-08-15 · 修订：2026-11-08 · License：Apache-2.0
 
 ## 0. 概述
 
-SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理摄像头画面，把美化结果作为**虚拟摄像头**输出（OBS / Zoom / Teams / Discord / 钉钉 / 腾讯会议等可调用），核心开源（Apache-2.0）。
+SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理摄像头画面，把美化结果作为**虚拟摄像头**输出（OBS / Zoom / Teams / Discord / 钉钉 / 腾讯会议等可调用），核心开源（Apache-2.0）。v1 暴露一个虚拟摄像头设备，同一时间支持一个消费应用。
 
 - **主打差异化**：免费/开源 + 美颜分级可快速设置 + 兼容自然美颜 → 美妆 → 娱乐 AR 全谱。
 - **首发场景优先级**：直播/推流 + 内容录制 优先；实时视频通话/会议 后置（延迟要求更严，后续阶段再压）。
 - **首发市场**：中英双语并重。
 
-> MVP 阶段虚拟摄像头的任务是“做一个 OBS 和主流会议软件能识别的视频设备”。v1 最低系统为 Windows 11 build 22000，使用系统用户态虚拟摄像头 API；双语主要增加 i18n 与双分发渠道，消费端兼容矩阵仍须实机验证。
+> MVP 阶段虚拟摄像头的任务是“做一个 OBS 和主流会议软件能分别识别和使用的视频设备”。v1 最低系统为 Windows 11 build 22000，使用系统用户态虚拟摄像头 API；消费应用必须单独使用该设备，不承诺 OBS 与会议软件或两个会议软件并发取流。双语主要增加 i18n 与双分发渠道，单消费者兼容矩阵仍须实机验证。
 
 ## 1. 范围
 
@@ -20,7 +20,7 @@ SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理�
 - 人脸：轻量人脸关键点模型（ONNX Runtime + DirectML EP）
 - 自然美颜效果：磨皮（双边滤波 + 肤肤 mask）、提亮、瘦脸（网格形变）、大眼（网格形变）
 - 分级预设系统：分级(level) / 预置(style) / 自定义 三层控制
-- 虚拟摄像头输出：Windows 11 `MFCreateVirtualCamera` + 自定义 Media Foundation media source（用户态）
+- 虚拟摄像头输出：一个 Windows 11 `MFCreateVirtualCamera` 设备 + 自定义 Media Foundation media source（用户态）；同一时间支持一个消费应用
 - UI：Qt6 前端壳，中英 i18n
 - 性能：iGPU（Iris Xe）@30fps 流畅（默认）；fps 可设
 
@@ -33,6 +33,8 @@ SparkFace（星颜）是面向他人的商业桌面美颜软件：实时处理�
 | v3 | 娱乐 AR（贴纸/面具/特效）；tgfx 作 AR/合成层候选 |
 | v4 | NDI 输出（可选专有插件，核心构建外）+ 可能 Spout/文件录制 sinks |
 | v5 | macOS 移植（bgfx Metal 后端 + CoreMediaIO 虚拟摄像头）+ 通话场景 app 兼容压延迟 |
+
+多消费者并发属于 post-v1 能力，版本和实现路线（多设备别名、应用插件或 AVStream 驱动）尚未承诺。
 
 ## 2. 架构与数据流
 
@@ -211,7 +213,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 
 | # | 风险 | 去风险 |
 |---|------|--------|
-| 1 | **Windows 11 user-mode virtual camera**：custom media source 由 Frame Server 激活，涉及 COM 注册、生命周期、隐私权限、格式协商和消费端差异 | **实现第一步前置 Spike A**：基于微软官方 VirtualCamera sample 的最小 source，验证 OBS + 至少一个会议 app、1080p30、黑帧、重启/重启系统、清理、权限及双消费者 |
+| 1 | **Windows 11 user-mode virtual camera**：custom media source 由 Frame Server 激活，涉及 COM 注册、生命周期、隐私权限、格式协商和消费端差异 | **Spike A/A2：GO-WITH-CAVEAT**；OBS 与腾讯会议单独使用均通过，真实应用并发失败。v1 明确采用单设备、单消费者契约 |
 | 2 | **跨 device GPU 链 + camera handoff**：D3D11→D3D12 共享、fence/state ownership、DirectML/bgfx interop、Frame Server 是否保留 GPU surface 都未验 | **Spike B**：NT shared handle + shared fence；验证 DirectML I/O binding、bgfx native resource、`MFCreateDXGISurfaceBuffer`；不通才测一次 readback + shared-memory fallback |
 | 3 | **iGPU 30fps 预算**（Iris Xe @33ms 跑采集+解码+人脸+美颜+handoff+调度）没有安全余量 | iGPU 参考机从 day1 当性能门禁；预算实测非估；爆预算兜底：更轻模型、隔帧检测或 24fps |
 | 4 | **bgfx compute + 原生资源交接**未验 | Spike B 在 D3D12 下运行 compute，验证支持的 native-resource 接口及是否隐藏复制 |
@@ -219,7 +221,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 | 6 | **“自然不塑料”质量天花板** | 真人脸素材早做视觉验证；调预置并对照 GPUPixel/GPUImage 输出做 sanity |
 | 7 | **多 GPU 拓扑**：三个 device 不在同一 adapter 时共享链可能失效 | v1 优先同 adapter(iGPU)；Spike B 按 adapter LUID 断言；dGPU 60fps 路线后置 |
 | 8 | **MJPEG 解码**：解码延迟及输出格式可能破坏共享链 | 预算计入解码；验证硬解输出格式，否则明确测量转换成本 |
-| 9 | **运行时边角**：热降频、摄像头隐私、Frame Server 重启、多消费者 | 10 分钟 soak、隐私开关、Frame Server 恢复、OBS+会议 app 并发消费实测 |
+| 9 | **运行时边角**：热降频、摄像头隐私、Frame Server 重启、第二应用误占用 | 10 分钟 soak、隐私开关、Frame Server 恢复；UI/文档明确同一时间仅支持一个消费应用 |
 
 ### 6.2 发布/合规风险
 
@@ -231,7 +233,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 
 ### 6.3 实现首批三件 throwaway spike（正式实现前置）
 
-1. Windows 11 用户态虚拟摄像头（注册、Frame Server custom media source、共享内存 feeder、格式/消费端、黑帧、生命周期、双消费者）
+1. Windows 11 用户态虚拟摄像头（注册、Frame Server custom media source、共享内存 feeder、格式/消费端、黑帧、生命周期、单消费者；A2 另记录真实应用并发限制）
 2. D3D11↔D3D12 GPU 共享与 camera handoff（shared handle + fence/state contract + DirectML/bgfx + GPU-backed MF sample；必要时测 readback fallback）
 3. 人脸模型 iGPU DirectML 性能与质量选型
 
@@ -249,7 +251,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
    - 无人脸降级逻辑(无脸/关键点不稳定时瘦脸/大眼禁用、磨皮留全帧)
 2. **集成（本地实机）**：合成视频文件当输入，跑 capture→face→beauty→virtualcam producer→custom media source 全链；测试消费者断言分辨率/帧率/格式
 3. **性能门禁（Iris Xe）**：测每阶段延迟，30fps 默认全开效果@1080p；总 p95 ≤33.3ms；持续负载 10min 验热降频；24/30 为承诺线，60 只报告不门禁
-4. **虚拟摄像头兼容矩阵**：Windows 11 支持版本上，OBS + Zoom/Teams/Discord/钉钉/腾讯会议识别与帧正确；Intel/NVIDIA/AMD、单/混合 GPU；安装/卸载无残留；OBS+会议 app 双消费者并发
+4. **虚拟摄像头兼容矩阵**：Windows 11 支持版本上，OBS、Zoom/Teams/Discord/钉钉/腾讯会议逐一单独验证识别与帧正确；Intel/NVIDIA/AMD、单/混合 GPU；安装/卸载无残留。v1 不把两个应用同时打开同一设备列为通过条件
 5. **视觉质量验证**：真人脸素材库覆盖多肤色/性别/眼镜/运动；按 level 人工评审；无人脸/多人/半脸/遮挡/侧脸边角
 6. **i18n**：中英串加载、无硬编码用户可见串、CJK 字体渲染(UI+叠加)
 7. **license 合规（CI）**：reuse/SPDX 扫描，核心无 GPL 污染、微软 sample 归属正确、Qt6 LGPL 义务文档化
@@ -265,7 +267,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 | 采集 | Windows Media Foundation（含 MJPEG 解码） |
 | 渲染/计算后端 | bgfx（Windows pin D3D12 对齐 DirectML）；自写 shader，算法参考 GPUPixel/GPUImage |
 | 人脸 ML | ONNX Runtime + DirectML EP，轻量人脸关键点模型 |
-| 虚拟摄像头 | `MFCreateVirtualCamera` + custom Media Foundation source（用户态） |
+| 虚拟摄像头 | 一个 `MFCreateVirtualCamera` + custom Media Foundation source（用户态）；同一时间一个消费应用 |
 | 输出格式 | NV12 为主、BGRA8 兜底；默认 1080p |
 | UI | Qt6（v1）；引擎经 C ABI 与 UI 解耦，未来可换 WinUI3/SwiftUI |
 | AR/合成层（v3） | tgfx 候选 |
@@ -285,3 +287,4 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 - **人脸模型最终选型**：spike benchmark 后定（MediaPipe 468-pt vs 更轻 68/106/190-pt）。
 - **dGPU 60fps 路线**：跨 adapter 拷贝权衡留 spike，v1 不承诺集显 60 流畅。
 - **像素-buffer 预览模式**：`sf_preview_query_format` 支持与否待实现期定，看 UI 端需求。
+- **多消费者虚拟摄像头**：post-v1 重新立项；v1 不承诺两个应用同时打开同一设备。届时在多设备别名、应用插件和 AVStream 驱动之间按兼容性与维护成本重新选型。

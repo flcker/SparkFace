@@ -9,16 +9,18 @@
 
 SparkFace (Chinese: **星颜**, "sparkling face") is a desktop beauty application that
 processes your webcam feed in real time and exposes the beautified result as a
-**virtual camera** — usable in any video app (OBS, Zoom, Teams, Discord, …). It
-delivers smooth, natural face beautification live, with filters and AR effects,
-and is designed to later output **NDI** for network video streaming.
+**virtual camera** for video applications such as OBS, Zoom, Teams, and Discord.
+v1 exposes one virtual-camera device and supports one active consuming application
+at a time; concurrent consumers are deferred to a later release. It delivers smooth,
+natural face beautification live, with filters and AR effects, and is designed to
+later output **NDI** for network video streaming.
 
-> **Status:** Phase-0 is in progress for the Windows 11 user-mode virtual-camera architecture. Task 0 passed on the Intel Iris Xe reference workstation: Media Foundation virtual-camera API, bgfx Direct3D 12, and ONNX Runtime DirectML all executed successfully. Product implementation has not started. See the [documentation index](docs/README.md).
+> **Status:** Phase-0 is in progress. The Windows 11 environment gate passed, and the user-mode virtual-camera gate is **GO-WITH-CAVEAT** for the accepted v1 single-consumer contract. Spike B GPU handoff and Spike C face-model performance remain. Product implementation has not started. See the [documentation index](docs/README.md).
 
 ## ✨ Planned Features
 
 - **Real-time beauty** — skin smoothing, brightening, face slimming, eye enlargement, makeup
-- **Virtual camera output** — appears as a webcam to OBS, Zoom, Teams, Discord, etc.
+- **Virtual camera output** — appears as one webcam to OBS, Zoom, Teams, Discord, etc.; v1 supports one consuming application at a time
 - **Webcam / screen capture input**
 - **Face detection & tracking** — landmarks & mesh for accurate effect placement
 - **Filters & AR effects** — color grading, stickers, masks

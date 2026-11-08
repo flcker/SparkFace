@@ -1,6 +1,6 @@
 # SparkFace Phase-0 Spike A2 — Frame Server Multi-Consumer Recovery Plan
 
-**Status:** Proposed corrective spike after Spike A **NO-GO**  
+**Status:** Completed — **GO-WITH-CAVEAT** accepted for v1 single-consumer scope; real-application concurrency is deferred
 **Date:** 2026-11-06  
 **Spec:** [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md)  
 **Predecessor:** [Phase-0 spikes — Spike A verdict](2026-08-15-phase0-spikes.md#verdict-log)
@@ -14,7 +14,7 @@ This is a corrective feasibility spike, not product implementation. It must eith
 1. prove simultaneous OBS + meeting-app delivery with measured latency and stable lifecycle, changing Spike A to **GO**; or
 2. produce a precise, reproducible blocker and preserve Spike A as **NO-GO**.
 
-Spike B, Spike C, and the detailed v1 build plan remain blocked until A2 reaches GO. A GO-WITH-CAVEAT verdict is allowed only after an explicit product decision changes the v1 multi-consumer contract.
+On 2026-11-08 the product owner explicitly narrowed v1 to one virtual-camera device with one active consuming application at a time. This converts the measured concurrency NO-GO into an accepted **GO-WITH-CAVEAT** and unblocks Spike B, Spike C, and subsequent v1 planning once those spikes pass.
 
 ## Why A2 Exists
 
@@ -136,54 +136,64 @@ Also report achieved fps, duplicate sequences, skipped producer sequences, feede
 
 ### Task 0 — Establish an exact official baseline
 
-- [ ] Create `feat/phase0-virtualcam-multiconsumer` from the pushed Spike A verdict.
-- [ ] Fetch the pinned Windows-Camera revision into ignored `build/reference/`.
-- [ ] Build and run the official SimpleMediaSource contract tests that apply to the selected source.
-- [ ] Record the exact test list and baseline results before changing source behavior.
-- [ ] Copy only the files required for SimpleMediaSource activation, one stream, and registrar lifecycle, preserving attribution.
+- [x] Create `feat/phase0-virtualcam-multiconsumer` from the pushed Spike A verdict.
+- [x] Fetch the pinned Windows-Camera revision into ignored `build/reference/`.
+- [x] Build and run the official SimpleMediaSource contract tests that apply to the selected source.
+- [x] Record the exact test list and baseline results before changing source behavior.
+- [x] Copy only the files required for SimpleMediaSource activation, one stream, and registrar lifecycle, preserving attribution.
 
-**Gate:** the unmodified baseline source passes its applicable contract tests. Failure blocks modification; diagnose the environment first.
+**Observed baseline (2026-11-08):** built the pinned source and tests with Windows SDK `10.0.26100.0`, MSVC `19.51.36256`, and the installed `v145` toolset override. `SimpleMediaSourceTest.TestMediaSource`, `SimpleMediaSourceTest.TestMediaSourceStream`, and `SimpleMediaSourceTest.TestKsControl` all passed (`3/3`, 30 valid NV12 samples and 30 valid RGB32 samples). The separate `VirtualCameraSimpleMediaSourceTest.TestCreateVirtualCamera` correctly rejected a non-elevated unpackaged launch with `E_ACCESSDENIED`; the official test itself logs that elevation is required. This is a registrar privilege precondition, not a SimpleMediaSource contract failure, and A2 retests the virtual-camera lifecycle through its explicit elevated registrar in Task 6.
+
+**Gate:** PASS — the unmodified applicable source contract suite passed before A2 modification.
 
 ### Task 1 — Add source/stream contract tracing
 
-- [ ] Add stable per-instance IDs and the trace schema above.
-- [ ] Trace source and stream attributes at construction and activation.
-- [ ] Trace every state transition and Media Foundation event.
-- [ ] Trace media-type negotiation without changing behavior.
-- [ ] Run one diagnostic MF consumer and confirm a complete activation-to-shutdown trace.
+- [x] Add stable per-instance IDs and the trace schema above.
+- [x] Trace source and stream attributes at construction and activation.
+- [x] Trace every state transition and Media Foundation event.
+- [x] Trace media-type negotiation without changing behavior.
+- [x] Run one diagnostic MF consumer and confirm a complete activation-to-shutdown trace.
 
 **Gate:** a trace can distinguish one shared source from multiple independently activated source instances and can identify the active media type for each consumer.
 
+**Observed:** PASS — the CSV trace identified activation/source/stream instances, exposed both stream and descriptor shared flags, recorded NV12 negotiation and every source/stream transition, and correlated producer, enqueue, and consumer QPC timestamps.
+
 ### Task 2 — Prove Frame Server shared-stream behavior
 
-- [ ] Run the official baseline without `MF_DEVICESTREAM_FRAMESERVER_SHARED`; capture source-instance and client behavior.
-- [ ] Set `MF_DEVICESTREAM_FRAMESERVER_SHARED=TRUE` in the stream attribute store exposed to Frame Server.
-- [ ] Repeat with two diagnostic MF consumers in both activation orders.
-- [ ] Confirm both consumers receive changing producer sequences concurrently.
-- [ ] Confirm closing either consumer does not stop or change media type for the other.
+- [x] Run the official baseline without `MF_DEVICESTREAM_FRAMESERVER_SHARED`; capture source-instance and client behavior.
+- [x] Set `MF_DEVICESTREAM_FRAMESERVER_SHARED=TRUE` in the stream attribute store exposed to Frame Server.
+- [x] Repeat with two diagnostic MF consumers in both activation orders.
+- [x] Confirm both consumers receive changing producer sequences concurrently.
+- [x] Confirm closing either consumer does not stop or change media type for the other.
 
 **Gate:** two diagnostic consumers receive the same published sequence progression without sharing violations, black-only output, or source restart.
 
+**Observed:** PASS for diagnostic consumers — both consumers reported `frameserver_shared=stream:1,descriptor:1`, received the same moving NV12 sequence concurrently, and the remaining consumer continued after its peer exited.
+
 ### Task 3 — Implement broadcast IPC and idle recovery
 
-- [ ] Replace only the official synthetic-frame generator with the bounded broadcast ring adapter.
-- [ ] Keep a reader-local last-seen sequence in every source instance.
-- [ ] Generate a deterministic moving NV12 pattern with a visible sequence/time marker.
-- [ ] Verify two diagnostic consumers receive changing frames; compare their sequence ranges.
-- [ ] Stop the producer while both remain open; verify black frames begin within 100ms.
-- [ ] Restart the producer; verify both recover without reopening.
+- [x] Replace only the official synthetic-frame generator with the bounded broadcast ring adapter.
+- [x] Keep a reader-local last-seen sequence in every source instance.
+- [x] Generate a deterministic moving NV12 pattern with a visible sequence/time marker.
+- [x] Verify two diagnostic consumers receive changing frames; compare their sequence ranges.
+- [x] Stop the producer while both remain open; verify black frames begin within 100ms.
+- [x] Restart the producer; verify both recover without reopening.
 
 **Gate:** neither consumer starves the other, and both idle/recovery transitions pass.
 
+**Observed:** PASS — the broadcast ring served both consumers without a destructive cursor. Producer loss switched to black within the 100ms gate (conservative bound `<=50.7ms`), and both consumers resumed producer frames without reopening.
+
 ### Task 4 — Remove avoidable queueing and measure latency
 
-- [ ] Instrument all four QPC timestamps defined in the measurement model.
-- [ ] Eliminate polling waits and destructive auto-reset notification behavior from the hot path.
-- [ ] Ensure the source always takes the latest complete slot.
-- [ ] Run 10 minutes at 1920×1080 NV12 30fps with two diagnostic consumers.
-- [ ] Report p50/p95/p99 per stage, duplicate sequences, skipped sequences, fps, feeder CPU, and Frame Server CPU.
+- [x] Instrument all four QPC timestamps defined in the measurement model.
+- [x] Eliminate polling waits and destructive auto-reset notification behavior from the hot path.
+- [x] Ensure the source always takes the latest complete slot.
+- [x] Run 10 minutes at 1920×1080 NV12 30fps with two diagnostic consumers.
+- [ ] Report p50/p95/p99 per stage, duplicate sequences, skipped sequences, fps, feeder CPU, and Frame Server CPU. Average/p95, sequence counts, and fps were retained; the real-app NO-GO stop condition occurred before a separate p50/p99/CPU report was retained.
 
 **Gate:** internal handoff p95 ≤3ms, sustained output is 30fps within measurement precision, and there is no unbounded latency growth.
+
+**Observed:** PASS for the mandatory latency/fps gate — both consumers completed 18,000 frames at 30fps. Producer publish → source acquire was `0.083ms` average / `0.116ms` p95; source acquire → enqueue was `0.117ms` average / `0.160ms` p95; internal handoff was `0.200ms` average / `0.274ms` p95; Frame Server/client delivery was `27.666ms` average / `28.390ms` p95. The two consumers recorded `3/3` and `425/428` duplicate/skipped sequences respectively, with no unbounded latency growth.
 
 ### Task 5 — Revalidate real applications
 
@@ -206,16 +216,20 @@ For OBS, record stats and inspect the output with `ffprobe` plus sampled frame h
 
 **Gate:** both applications continuously receive valid changing frames in every case; zero sharing violations or camera-capture exceptions.
 
+**Observed:** FAIL / stop condition — with OBS Studio `33.0.0` first, OBS continued rendering the moving pattern while Tencent Meeting `3.47.2.405` remained on an empty preview. With Tencent Meeting first, Tencent rendered the moving pattern while OBS remained black. Each application passed alone, so enumeration, activation, NV12 production, and rendering are individually valid. The trace did not record a second running source when the second real application opened: failure occurs in Frame Server/client access-mode arbitration before the second source reaches the media-source streaming path. Cases C/D, repetition, and the simultaneous soak were not run because the plan requires an immediate stop when either real application still receives empty/idle output.
+
 ### Task 6 — Revalidate lifecycle and cleanup
 
-- [ ] Exercise install/start/stop/shutdown/remove.
-- [ ] Restart both applications and reopen the device.
-- [ ] Reboot once if registration, lifetime, or activation behavior changed from Spike A.
-- [ ] Remove the camera before unregistering the COM source.
-- [ ] Confirm no SparkFace PnP camera, COM registration, process, startup task, or RunOnce entry remains.
-- [ ] Record privilege boundaries. Treat HKLM COM registration and installer elevation as packaging requirements, not runtime elevation.
+- [x] Exercise install/start/stop/shutdown/remove.
+- [x] Restart both applications and reopen the device.
+- [x] Reboot once if registration, lifetime, or activation behavior changed from Spike A. Not needed: A2 retained the already-proven system lifetime and registration model.
+- [x] Remove the camera before unregistering the COM source.
+- [x] Confirm no SparkFace PnP/DirectShow camera, COM registration, process, startup task, or RunOnce entry remains.
+- [x] Record privilege boundaries. Treat HKLM COM registration and installer elevation as packaging requirements, not runtime elevation.
 
 **Gate:** normal camera use is non-elevated and cleanup leaves no registered device or COM class.
+
+**Observed:** PASS — install/remove required elevation for HKLM COM registration; OBS, Tencent Meeting, producer, and diagnostic consumers ran non-elevated. Uninstall returned success; the COM class, probe processes, startup entries, and DirectShow SparkFace device were absent afterward. Launching the producer after removal failed because the transport mapping was unavailable, as expected.
 
 ### Task 7 — Record verdict and discard the probe
 
@@ -230,10 +244,14 @@ restart=<yes/no>, reboot=<yes/no/not-needed>, clean_remove=<yes/no>,
 admin_install=<yes/no>, admin_runtime=<yes/no>, upstream=<commit>
 ```
 
-- [ ] Delete `spikes/virtualcam-a2/` and ignored probe artifacts.
-- [ ] Retain only plan/verdict documentation and any explicitly approved durable spec change.
-- [ ] Commit the verdict on the feature branch.
-- [ ] Push only after separate user approval.
+**Recorded result:** `Spike A2: NO-GO — shared_attribute=yes, source_instances=2 diagnostic / second real-app source never reached running, apps=OBS Studio 33.0.0 + Tencent Meeting 3.47.2.405, activation_orders=fail/fail, 1080p30=yes for either app alone, internal_handoff_p95_ms=0.274, frame_server_delivery_p95_ms=28.390, duplicates=428, skipped=431, idle_black_ms<=50.7, recovery=yes, restart=yes, reboot=not-needed, clean_remove=yes, admin_install=yes, admin_runtime=no, upstream=626f8b19c5f367602f2e89c6b314573d3776c9df`.
+
+**Accepted product decision (2026-11-08):** v1 exposes one virtual-camera device and supports one active consuming application at a time. The recorded A2 result remains the evidence that same-device concurrency is unsupported; it is no longer a v1 acceptance criterion. Multi-consumer support is deferred post-v1 without a committed version or implementation route. The v1 specification, root READMEs, compatibility matrix, documentation index, and original Phase-0 verdict log were updated accordingly.
+
+- [x] Delete `spikes/virtualcam-a2/` and ignored probe artifacts.
+- [x] Retain only plan/verdict documentation and any explicitly approved durable spec change.
+- [x] Commit the verdict on the feature branch.
+- [ ] Push only after separate user approval. Not pushed.
 
 ## Verdict Rules
 
@@ -256,14 +274,14 @@ Any mandatory GO criterion fails after the official source contract and broadcas
 
 ### GO-WITH-CAVEAT
 
-A2 cannot choose this outcome by itself. If multi-consumer still fails, GO-WITH-CAVEAT requires explicit user approval to change the v1 contract, followed by updates to:
+A2 cannot choose this outcome by itself. The product owner explicitly approved the required v1 contract change on 2026-11-08:
 
-- the v1 MVP specification;
-- README product claims;
-- compatibility matrix and tests;
-- the original Phase-0 verdict log.
+- v1 exposes one virtual-camera device;
+- one consuming application may use it at a time;
+- concurrent consumers are deferred post-v1;
+- the v1 specification, README product claims, compatibility matrix, tests, and original Phase-0 verdict log reflect the restriction.
 
-Without that product decision, multi-consumer failure remains NO-GO.
+Therefore A2 closes as **GO-WITH-CAVEAT** while preserving its measured concurrency failure.
 
 ## Stop Conditions
 
@@ -275,4 +293,4 @@ Stop and report before continuing when any of these occurs:
 - internal handoff p95 remains above 3ms after queueing is removed;
 - cleanup leaves an orphaned PnP device or COM registration.
 
-Do not proceed to Spike B/C or write the v1 implementation plan while a stop condition is active.
+The real-application concurrency stop condition fired and was recorded. After the explicit 2026-11-08 contract decision, it no longer blocks Spike B/C because concurrency is outside v1 scope; all other stop conditions remain binding.

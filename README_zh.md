@@ -8,15 +8,16 @@
 ![平台](https://img.shields.io/badge/平台-Windows%2011%2B-blue)
 
 星颜（英文名 **SparkFace**，"闪耀之颜"）是一款桌面端美颜软件：实时处理摄像头画面，并将美化后的结果作为
-**虚拟摄像头** 输出，可供任意视频软件（OBS、Zoom、Teams、Discord 等）调用。它提供自然流畅的实时美颜，
-并支持滤镜与 AR 特效，后续将支持 **NDI** 网络推流。
+**虚拟摄像头** 输出，供 OBS、Zoom、Teams、Discord 等视频软件调用。v1 暴露一个虚拟摄像头设备，
+同一时间支持一个消费应用；多消费者并发留待后续版本。它提供自然流畅的实时美颜，并支持滤镜与 AR 特效，
+后续将支持 **NDI** 网络推流。
 
-> **当前状态：** Windows 11 用户态虚拟摄像头架构的 Phase-0 正在执行。Task 0 已在 Intel Iris Xe 参考工作站通过：Media Foundation 虚拟摄像头 API、bgfx Direct3D 12 和 ONNX Runtime DirectML 均已成功运行。正式产品实现尚未开始。详见[文档索引](docs/README.md)。
+> **当前状态：** Phase-0 正在执行。Windows 11 环境门禁已通过；用户态虚拟摄像头在已接受的 v1 单消费者契约下为 **GO-WITH-CAVEAT**。后续仍需完成 Spike B GPU 交接和 Spike C 人脸模型性能门禁。正式产品实现尚未开始。详见[文档索引](docs/README.md)。
 
 ## ✨ 规划功能
 
 - **实时美颜** —— 磨皮、提亮、瘦脸、大眼、美妆
-- **虚拟摄像头输出** —— 对 OBS、Zoom、Teams、Discord 等表现为一个摄像头设备
+- **虚拟摄像头输出** —— 对 OBS、Zoom、Teams、Discord 等表现为一个摄像头设备；v1 同一时间支持一个消费应用
 - **摄像头 / 屏幕采集输入**
 - **人脸检测与跟踪** —— 关键点与网格，精确定位特效
 - **滤镜与 AR 特效** —— 调色、贴纸、面具
