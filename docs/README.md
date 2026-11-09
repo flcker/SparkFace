@@ -17,9 +17,9 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 
 - Task 0 Windows 11 environment gate: **GO**.
 - Spike A/A2 user-mode virtual camera: **GO-WITH-CAVEAT** — OBS and Tencent Meeting pass individually; v1 supports one virtual-camera consumer at a time, and concurrent consumers are deferred post-v1.
-- Spike B GPU sharing and camera handoff: pending; unblocked.
-- Spike C face-model DirectML performance: pending; unblocked.
-- Product implementation starts only after the remaining Phase-0 spikes return GO or an explicitly accepted GO-WITH-CAVEAT.
+- Spike B GPU sharing and camera handoff: **NO-GO** — the planned GPU-resident chain is unsupported, and the measured fallback is not a complete end-to-end 30fps result.
+- Spike C face-model DirectML performance: pending; blocked by the unaccepted Spike B NO-GO.
+- Product implementation remains blocked until the Spike B NO-GO is resolved and all remaining Phase-0 gates return GO or an explicitly accepted GO-WITH-CAVEAT.
 
 ## Documentation Rules / 文档规则
 

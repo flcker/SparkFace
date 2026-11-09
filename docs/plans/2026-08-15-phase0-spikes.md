@@ -144,19 +144,19 @@ git commit -m "spike(A): Windows user-mode virtual camera verdict"
 - Consumes: Task 0 GPU stack and Spike A's accepted virtual-camera media types/IPC contract. It does not consume Spike A probe code.
 - Produces: **Verdict B** — GO / GO-WITH-CAVEAT / NO-GO + measured: copy-free GPU path, working shared formats, D3D11↔D3D12 fence and resource-state protocol, synchronization cost, DirectML I/O-binding behavior, bgfx native-resource access, GPU-backed virtual-camera sample support, fallback readback+IPC cost, same-adapter confirmation, and total cost against ≤33.3ms.
 
-- [ ] **Step 1: Force all GPU components onto the iGPU adapter**
+- [x] **Step 1: Force all GPU components onto the iGPU adapter**
 
 Enumerate adapters and select the Intel Iris Xe by LUID. Create the D3D11 capture device, DirectML D3D12 device/queue, and bgfx D3D12 device on that adapter. Assert matching adapter LUIDs. A component that cannot be placed on the same adapter is a NO-GO finding for the copy-free design.
 
-- [ ] **Step 2: Confirm resource-sharing formats and APIs**
+- [x] **Step 2: Confirm resource-sharing formats and APIs**
 
 For NV12, BGRA8, RGBA8, and R8, create D3D11 textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`, export with `IDXGIResource1::CreateSharedHandle`, and open on D3D12 with `ID3D12Device::OpenSharedHandle`. Record creation/open success, required flags, row/layout constraints, and whether a shared heap or committed resource is exposed. Do not use the nonexistent `OpenSharedHandle1` API.
 
-- [ ] **Step 3: Define and prove synchronization/state ownership**
+- [x] **Step 3: Define and prove synchronization/state ownership**
 
 Use an `ID3D12Fence` shared handle and `ID3D11Device5::OpenSharedFence` where supported. Define, in the probe, which component owns the resource, the fence value before/after each hop, and the D3D12 state on entry/exit. Run a known-pattern round trip for 1,000 frames and validate contents after GPU completion. Do not treat `IDXGIKeyedMutex` as the D3D12 synchronization primitive.
 
-- [ ] **Step 4: Prove DirectML and bgfx interop**
+- [x] **Step 4: Prove DirectML and bgfx interop**
 
 Bind the shared resource to ONNX Runtime DirectML through supported device-memory/I/O-binding APIs and run a trivial model without `Map` or a staging upload in the per-frame GPU path. Import or access the resulting D3D12 resource through bgfx's supported native-resource interface and run one compute pass. Record any hidden copy or API limitation as a caveat or NO-GO.
 
@@ -164,7 +164,7 @@ Bind the shared resource to ONNX Runtime DirectML through supported device-memor
 
 Wrap the final DXGI surface with `MFCreateDXGISurfaceBuffer`, place it in an `IMFSample`, and deliver it from a reduced custom media source using the media type accepted by Spike A. Verify the camera in OBS and inspect whether Frame Server preserves the GPU surface or forces a copy/conversion. Record support and cost per format.
 
-- [ ] **Step 6: Measure the CPU fallback only if required**
+- [x] **Step 6: Measure the CPU fallback only if required**
 
 If the GPU-backed sample path is unsupported or unstable, read the final 1080p frame into a persistently allocated staging/readback buffer and publish it through the bounded shared-memory ring from Spike A. Measure readback, copy/IPC, and media-source delivery separately. No per-frame allocation.
 
@@ -172,7 +172,7 @@ If the GPU-backed sample path is unsupported or unstable, read the final 1080p f
 
 After warm-up, run at least 1,000 frames and then a 10-minute 1080p30 soak. Record per-hop fence wait/signal cost, DirectML binding/inference floor, bgfx pass, virtual-camera handoff, p50/p95/p99 frame cost, dropped frames, and total against the 33.3ms envelope.
 
-- [ ] **Step 8: Record Verdict B + throw away**
+- [x] **Step 8: Record Verdict B + throw away**
 
 Append: `Spike B: <verdict> — copy_free_gpu=<yes/no>, formats=<list>, fence_protocol=<ok/fail>, sync_p95_ms=<x>, dml_binding=<direct/copy>, bgfx_native=<yes/no>, camera_gpu_sample=<yes/no>, fallback_readback_ipc_ms=<x|n/a>, same_adapter=<yes/no>, total_p95_ms=<x>, fits_30fps=<yes/no>`.
 
@@ -236,10 +236,10 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 *(Executor appends each spike's verdict here as tasks complete. GO or an explicitly accepted GO-WITH-CAVEAT may proceed; an unaccepted NO-GO stops planning.)*
 
 - Task 0 env gate: **GO** — `Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, `MFCreateVirtualCamera` available, bgfx `1.129.8940-496#1` selected Direct3D 12, ONNX Runtime DirectML `1.24.4` returned finite output `2` with CPU fallback disabled, `CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, vcpkg baseline `a4f7741c53c97354fc43222fea17955c657dd549`; `ENV_GATE_PASS` observed.
-- Spike A/A2: **GO-WITH-CAVEAT** — on 2026-11-08 the product contract was explicitly narrowed to one `MFCreateVirtualCamera` device with one active consuming application at a time; concurrent consumers are deferred post-v1. Reference=`microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df`; apps=`OBS Studio 33.0.0, Tencent Meeting 3.47.2.405`; single-consumer OBS=`1920x1080 NV12, 30fps, 360-frame recording, zero OBS render/output skips`; single-consumer Tencent Meeting=`device selected and moving frames rendered`; 10-minute run=`18,000 samples at 30.00fps`; idle black=`yes`; producer recovery=`yes`; app restart/reboot persistence/clean remove=`yes`; privileges=`admin install/remove for HKLM COM, non-admin runtime`. The accepted v1 contract is proven and Spike B/C are unblocked.
+- Spike A/A2: **GO-WITH-CAVEAT** — on 2026-11-08 the product contract was explicitly narrowed to one `MFCreateVirtualCamera` device with one active consuming application at a time; concurrent consumers are deferred post-v1. Reference=`microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df`; apps=`OBS Studio 33.0.0, Tencent Meeting 3.47.2.405`; single-consumer OBS=`1920x1080 NV12, 30fps, 360-frame recording, zero OBS render/output skips`; single-consumer Tencent Meeting=`device selected and moving frames rendered`; 10-minute run=`18,000 samples at 30.00fps`; idle black=`yes`; producer recovery=`yes`; app restart/reboot persistence/clean remove=`yes`; privileges=`admin install/remove for HKLM COM, non-admin runtime`. The accepted v1 contract was proven and unblocked Spike B/C at the completion of A2.
   - Corrective plan and full evidence: [Spike A2 — Frame Server multi-consumer recovery](2026-11-06-phase0-spike-a2-multiconsumer.md).
   - Deferred limitation: real applications cannot concurrently consume the same device. OBS-first left Tencent Meeting empty; Tencent-first left OBS black. A2 confirmed the failure occurs in Frame Server/client access-mode arbitration before the second source reaches streaming. Diagnostic consumers did share successfully; internal handoff was `0.200ms` average / `0.274ms` p95 and Frame Server/client delivery was `27.666ms` average / `28.390ms` p95. This evidence informs a future multi-consumer architecture decision but is not a v1 acceptance gate.
-- [Spike B — GPU sharing/fence/camera-handoff verdict]
+- Spike B: **NO-GO** — `copy_free_gpu=no`; `formats=D3D12→D3D11 {BGRA8,RGBA8,R8} only` (`NV12` failed and D3D11→D3D12 failed for all four tested formats); `fence_protocol=ok`; `sync_p95_ms=3.107`; `dml_binding=copy` (direct resource I/O binding exited with `0xC0000005`); `bgfx_native=no` (native imported-resource path exited with `0xC0000005`; bgfx-owned compute did run); `camera_gpu_sample=no` (D3D11 NV12 wrapped as an `IMFSample`, but Frame Server preservation was not proven; D3D12 NV12 returned `E_NOINTERFACE`); `fallback_readback_ipc_ms=4.502 p95` over 1,000 frames (`6.416ms` p95 in the 10-minute soak); `same_adapter=yes`; `total_p95_ms=n/a`; `fits_30fps=no`. On Iris Xe driver `32.0.101.7092`, 1,000 known-pattern round trips passed per-frame validation and the 18,000-frame fallback soak recorded four missed 33.3ms deadlines. The measured partial-copy component sum was `8.855ms` p95, but excludes capture/readback-to-DirectML, full-frame upload into bgfx, and Frame Server delivery, so it is not an end-to-end total. The planned GPU-resident chain is unsupported; Spike C and the v1 build plan remain gated.
 - [Spike C — face model verdict]
 
 ## Gate to v1 Build Plan

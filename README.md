@@ -15,7 +15,7 @@ at a time; concurrent consumers are deferred to a later release. It delivers smo
 natural face beautification live, with filters and AR effects, and is designed to
 later output **NDI** for network video streaming.
 
-> **Status:** Phase-0 is in progress. The Windows 11 environment gate passed, and the user-mode virtual-camera gate is **GO-WITH-CAVEAT** for the accepted v1 single-consumer contract. Spike B GPU handoff and Spike C face-model performance remain. Product implementation has not started. See the [documentation index](docs/README.md).
+> **Status:** Phase-0 is blocked. The Windows 11 environment gate passed, and the user-mode virtual-camera gate is **GO-WITH-CAVEAT** for the accepted v1 single-consumer contract. Spike B GPU handoff is **NO-GO**; Spike C and product implementation remain gated pending a product/architecture decision. See the [documentation index](docs/README.md).
 
 ## ✨ Planned Features
 
