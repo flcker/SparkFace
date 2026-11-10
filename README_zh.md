@@ -12,7 +12,7 @@
 同一时间支持一个消费应用；多消费者并发留待后续版本。它提供自然流畅的实时美颜，并支持滤镜与 AR 特效，
 后续将支持 **NDI** 网络推流。
 
-> **当前状态：** Phase-0 正在执行。Windows 11 环境门禁已通过；用户态虚拟摄像头在已接受的 v1 单消费者契约下为 **GO-WITH-CAVEAT**。后续仍需完成 Spike B GPU 交接和 Spike C 人脸模型性能门禁。正式产品实现尚未开始。详见[文档索引](docs/README.md)。
+> **当前状态：** Phase-0 已阻塞。Windows 11 环境门禁已通过；用户态虚拟摄像头在已接受的 v1 单消费者契约下为 **GO-WITH-CAVEAT**。Spike B/B2/B3 GPU 交接为 **NO-GO**：CPU fallback 正确且达到合成负载 1080p30，但 B3 较优 pacing 模式的 producer-to-client p95 仍为 `57.635ms`，超过 33.3ms 预算。Spike C 与正式产品实现继续暂停，等待产品/架构决策。详见[文档索引](docs/README.md)。
 
 ## ✨ 规划功能
 

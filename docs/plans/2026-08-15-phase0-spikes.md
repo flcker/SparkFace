@@ -144,19 +144,19 @@ git commit -m "spike(A): Windows user-mode virtual camera verdict"
 - Consumes: Task 0 GPU stack and Spike A's accepted virtual-camera media types/IPC contract. It does not consume Spike A probe code.
 - Produces: **Verdict B** — GO / GO-WITH-CAVEAT / NO-GO + measured: copy-free GPU path, working shared formats, D3D11↔D3D12 fence and resource-state protocol, synchronization cost, DirectML I/O-binding behavior, bgfx native-resource access, GPU-backed virtual-camera sample support, fallback readback+IPC cost, same-adapter confirmation, and total cost against ≤33.3ms.
 
-- [ ] **Step 1: Force all GPU components onto the iGPU adapter**
+- [x] **Step 1: Force all GPU components onto the iGPU adapter**
 
 Enumerate adapters and select the Intel Iris Xe by LUID. Create the D3D11 capture device, DirectML D3D12 device/queue, and bgfx D3D12 device on that adapter. Assert matching adapter LUIDs. A component that cannot be placed on the same adapter is a NO-GO finding for the copy-free design.
 
-- [ ] **Step 2: Confirm resource-sharing formats and APIs**
+- [x] **Step 2: Confirm resource-sharing formats and APIs**
 
 For NV12, BGRA8, RGBA8, and R8, create D3D11 textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`, export with `IDXGIResource1::CreateSharedHandle`, and open on D3D12 with `ID3D12Device::OpenSharedHandle`. Record creation/open success, required flags, row/layout constraints, and whether a shared heap or committed resource is exposed. Do not use the nonexistent `OpenSharedHandle1` API.
 
-- [ ] **Step 3: Define and prove synchronization/state ownership**
+- [x] **Step 3: Define and prove synchronization/state ownership**
 
 Use an `ID3D12Fence` shared handle and `ID3D11Device5::OpenSharedFence` where supported. Define, in the probe, which component owns the resource, the fence value before/after each hop, and the D3D12 state on entry/exit. Run a known-pattern round trip for 1,000 frames and validate contents after GPU completion. Do not treat `IDXGIKeyedMutex` as the D3D12 synchronization primitive.
 
-- [ ] **Step 4: Prove DirectML and bgfx interop**
+- [x] **Step 4: Prove DirectML and bgfx interop**
 
 Bind the shared resource to ONNX Runtime DirectML through supported device-memory/I/O-binding APIs and run a trivial model without `Map` or a staging upload in the per-frame GPU path. Import or access the resulting D3D12 resource through bgfx's supported native-resource interface and run one compute pass. Record any hidden copy or API limitation as a caveat or NO-GO.
 
@@ -164,7 +164,7 @@ Bind the shared resource to ONNX Runtime DirectML through supported device-memor
 
 Wrap the final DXGI surface with `MFCreateDXGISurfaceBuffer`, place it in an `IMFSample`, and deliver it from a reduced custom media source using the media type accepted by Spike A. Verify the camera in OBS and inspect whether Frame Server preserves the GPU surface or forces a copy/conversion. Record support and cost per format.
 
-- [ ] **Step 6: Measure the CPU fallback only if required**
+- [x] **Step 6: Measure the CPU fallback only if required**
 
 If the GPU-backed sample path is unsupported or unstable, read the final 1080p frame into a persistently allocated staging/readback buffer and publish it through the bounded shared-memory ring from Spike A. Measure readback, copy/IPC, and media-source delivery separately. No per-frame allocation.
 
@@ -172,7 +172,7 @@ If the GPU-backed sample path is unsupported or unstable, read the final 1080p f
 
 After warm-up, run at least 1,000 frames and then a 10-minute 1080p30 soak. Record per-hop fence wait/signal cost, DirectML binding/inference floor, bgfx pass, virtual-camera handoff, p50/p95/p99 frame cost, dropped frames, and total against the 33.3ms envelope.
 
-- [ ] **Step 8: Record Verdict B + throw away**
+- [x] **Step 8: Record Verdict B + throw away**
 
 Append: `Spike B: <verdict> — copy_free_gpu=<yes/no>, formats=<list>, fence_protocol=<ok/fail>, sync_p95_ms=<x>, dml_binding=<direct/copy>, bgfx_native=<yes/no>, camera_gpu_sample=<yes/no>, fallback_readback_ipc_ms=<x|n/a>, same_adapter=<yes/no>, total_p95_ms=<x>, fits_30fps=<yes/no>`.
 
@@ -181,6 +181,86 @@ Delete `spikes/sharing/`. Commit the verdict-log update:
 git add docs/plans/2026-08-15-phase0-spikes.md
 git commit -m "spike(B): GPU sharing and virtual-camera handoff verdict"
 ```
+
+### Task 2.1: Spike B2 — End-to-End CPU Fallback Transport (reproducible evidence branch)
+
+**Files:**
+- Create and retain on branch `spikes`: `spikes/fallback/`.
+- Modify on branch `spikes`: root `CMakeLists.txt` to build the probe.
+- Verdict-only branches retain this task and its final verdict but do not merge probe code into `main`.
+
+**Hypothesis:** After the copy-free Spike B chain failed, a fully preallocated CPU fallback can still deliver correct 1920×1080 frames through D3D11 readback → CPU staging → bgfx upload/compute/readback → bounded shared-memory IPC → custom Media Foundation source → Frame Server at 30fps. This spike measures a transport floor with synthetic compute; it does not substitute for Spike C or prove the final beauty pipeline budget.
+
+**Interfaces:**
+- Consumes: Spike A/A2's accepted single-consumer NV12 virtual-camera contract and Spike B's measured copy-path findings.
+- Produces: **Verdict B2** — correctness, per-stage latency, full fallback transport latency, Frame Server delivery, sustained 1080p30 behavior, idle/recovery behavior, and cleanup evidence.
+
+- [x] **Step 1: Pin the reproducible baseline**
+
+Record the Windows-Camera upstream commit, toolchain, Iris Xe driver, bgfx port, media types, virtual-camera CLSID/name, and exact build/run commands. Preserve Microsoft license and attribution for derived source files.
+
+- [x] **Step 2: Implement the allocation-free fallback transport**
+
+Generate a deterministic 1080p frame in a D3D11 texture, read into a persistent staging buffer, upload into a bgfx-owned D3D12 texture, run a synthetic compute pass, read back into a persistent output buffer, and publish the latest complete frame through a fixed-size named shared-memory ring. No per-frame heap allocation is allowed after warm-up.
+
+- [x] **Step 3: Instrument every transport stage**
+
+Use QPC timestamps for D3D11 readback, CPU preparation, bgfx upload/compute/readback, ring publication, source acquisition/sample enqueue, and Frame Server/client delivery. Report p50/p95/p99/max and missed 33.3ms deadlines separately; never collapse missing stages into a claimed end-to-end total.
+
+- [x] **Step 4: Prove the Frame Server path**
+
+Use the pinned Windows-Camera source contract and the accepted single-consumer NV12 1920×1080/30 media type. Validate a diagnostic MF consumer, OBS, and Tencent Meeting individually. Producer loss must switch to black within 100ms and recovery must not require reopening the camera.
+
+- [x] **Step 5: Validate correctness and sustained behavior**
+
+Run 1,000 known-pattern frames with zero content/sequence errors, then a 10-minute 18,000-frame soak. Record achieved fps, duplicate/skipped sequences, missed deadlines, process CPU, and all per-stage latency distributions.
+
+- [x] **Step 6: Record Verdict B2 and retain the probe**
+
+Append: `Spike B2: <GO-WITH-CAVEAT|NO-GO> — correctness=<pass/fail>, d3d11_readback_p95_ms=<x>, bgfx_roundtrip_p95_ms=<x>, ring_publish_p95_ms=<x>, source_enqueue_p95_ms=<x>, frame_server_delivery_p95_ms=<x>, transport_total_p95_ms=<x|n/a>, soak_missed_deadlines=<n>, idle_black_ms=<x>, recovery=<yes/no>, clean_remove=<yes/no>, product_30fps_proven=no`.
+
+Keep `spikes/fallback/` on branch `spikes` with reproduction instructions and upstream attribution. Do not merge probe code into `main`; create a separate verdict-only branch for durable documentation.
+
+---
+### Task 2.2: Spike B3 — Frame-Server Latency Decomposition and Pacing Comparison
+
+**Files:**
+- Modify and retain on branch `spikes`: `spikes/fallback/media-source/windows-camera-b2.patch`, `spikes/fallback/consumer/mf_main.cpp`, and `spikes/fallback/README.md`.
+- Modify this plan with the B3 task and, only after measurement, its verdict-log entry.
+
+**Hypothesis:** The B2 fallback's latency can be honestly decomposed across producer publication, Frame Server media-source acquisition, source copy/payload finalization, and client delivery. Comparing the existing bounded wait-for-next-sequence pacing with immediate-latest-frame pacing over the same 1,000-frame workload identifies whether request pacing—not a hidden or renamed boundary—changes the measured producer-to-client frame age.
+
+**Interfaces:**
+- Consumes: the retained B2 ring, marker/checksum contract, diagnostic MF consumer, and single-consumer virtual-camera contract.
+- Produces: **Verdict B3** — two measured 1,000-frame pacing distributions, sequence/content validity, duplicate/skipped counts, explicit source-boundary availability, recovery/app validation for the winner, and a conditional soak result. It does not revise the B/B2 verdicts without measured evidence.
+
+- [ ] **Step 1: Add activation-scoped pacing modes**
+
+Keep `wait` as the default: it waits up to 35ms for a sequence newer than the last delivered sequence. Add `immediate`, which selects the latest complete sequence without the new-sequence wait and may duplicate that sequence. Read the probe-only cross-process mode flag once per media-source activation; do not perform per-frame filesystem or registry lookup. Document exact mode-file setting, client shutdown, and Frame Server release/restart steps: mode changes take effect only after applications and Frame Server release the old source. Preserve torn-slot rejection, stale-frame black fallback, idle-black timing, and producer recovery in both modes.
+
+- [ ] **Step 2: Carry honest source diagnostics in the payload**
+
+Preserve bytes 0..39 (`SFB2` marker, sequence, checksum, producer QPC, B2 source copy-complete QPC, published QPC). Add QPC fields after byte 40 for media-source request entry, complete sequence acquired, and source copy complete. Record sample enqueue only if the patched stream can write it before queueing without allocation or unsafe post-queue payload mutation; otherwise name the nearest safe boundary exactly and state the instrumentation limitation. Require the consumer to check its sample length before reading each added field. Do not change marker/checksum semantics or allocate per frame.
+
+- [ ] **Step 3: Report segmented distributions and validity**
+
+For every available segment report p50/p95/p99/max, with safe `n/a` output for an unavailable segment: producer→publish, published age at request, source wait, source copy, source-ready→enqueue (or the explicitly named nearest safe boundary), Frame Server/client delivery, and producer→client frame age. A published-age sample exists only when publication precedes request entry; count frames published after request separately rather than reporting a negative age. Report the declared pacing mode, B3-diagnostic sample count, sequence/content validity, duplicates, skips, idle-black frames, and recovery. Keep `--frames` and `--expect-recovery` compatible.
+
+- [ ] **Step 4: Run matched 1,000-frame comparison and select conditionally**
+
+On the pinned Iris Xe baseline, run 1,000 valid frames in each mode with the same producer workload. Record all distributions and validity counters; immediate-mode duplicates are valid observations, not content errors. A provisional winner requires zero marker/content errors in both runs and is the mode with the lower producer-to-client frame-age p95. Do not claim a winner if the inputs or diagnostics are incomplete.
+
+- [ ] **Step 5: Validate the winner, then soak only if it clears the gate**
+
+For the provisional winner, prove idle-black and producer recovery with `--expect-recovery`, then open OBS and Tencent Meeting separately and confirm the valid moving pattern. Only if the winner's 1,000-frame producer-to-client frame-age p95 is **≤33.3ms**, run a 10-minute soak and record its distributions, missed deadlines, duplicate/skipped sequences, and recovery. If p95 exceeds 33.3ms, skip the soak, retain the B/B2 NO-GO, and record the comparison without fabricating a GO.
+
+- [ ] **Step 6: Clean up and record Verdict B3 after measurement**
+
+Remove the mode file after the experiment and remove the virtual camera with the existing registrar procedure. Append only measured evidence in this exact form:
+
+`Spike B3: <GO-WITH-CAVEAT|NO-GO> — wait_producer_to_client_p95_ms=<x>, immediate_producer_to_client_p95_ms=<x>, winner=<wait|immediate|none>, wait_validity=<pass/fail>, immediate_validity=<pass/fail>, winner_recovery=<yes/no>, winner_apps=<OBS/Tencent result>, winner_soak=<ran result|not-run p95 gate>, source_enqueue_boundary=<exact name|unavailable>, product_30fps_proven=no`.
+
+Do not append this entry until measurements exist. Keep the evidence probe on its dedicated branch; no B3 code or result is product source.
 
 ---
 
@@ -236,10 +316,12 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 *(Executor appends each spike's verdict here as tasks complete. GO or an explicitly accepted GO-WITH-CAVEAT may proceed; an unaccepted NO-GO stops planning.)*
 
 - Task 0 env gate: **GO** — `Windows build 26300`, `Intel Iris Xe 32.0.101.7088`, `MFCreateVirtualCamera` available, bgfx `1.129.8940-496#1` selected Direct3D 12, ONNX Runtime DirectML `1.24.4` returned finite output `2` with CPU fallback disabled, `CMake 4.4.3`, `MSVC 19.51.36256`, `Windows SDK 10.0.26100.0`, vcpkg baseline `a4f7741c53c97354fc43222fea17955c657dd549`; `ENV_GATE_PASS` observed.
-- Spike A/A2: **GO-WITH-CAVEAT** — on 2026-11-08 the product contract was explicitly narrowed to one `MFCreateVirtualCamera` device with one active consuming application at a time; concurrent consumers are deferred post-v1. Reference=`microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df`; apps=`OBS Studio 33.0.0, Tencent Meeting 3.47.2.405`; single-consumer OBS=`1920x1080 NV12, 30fps, 360-frame recording, zero OBS render/output skips`; single-consumer Tencent Meeting=`device selected and moving frames rendered`; 10-minute run=`18,000 samples at 30.00fps`; idle black=`yes`; producer recovery=`yes`; app restart/reboot persistence/clean remove=`yes`; privileges=`admin install/remove for HKLM COM, non-admin runtime`. The accepted v1 contract is proven and Spike B/C are unblocked.
+- Spike A/A2: **GO-WITH-CAVEAT** — on 2026-11-08 the product contract was explicitly narrowed to one `MFCreateVirtualCamera` device with one active consuming application at a time; concurrent consumers are deferred post-v1. Reference=`microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df`; apps=`OBS Studio 33.0.0, Tencent Meeting 3.47.2.405`; single-consumer OBS=`1920x1080 NV12, 30fps, 360-frame recording, zero OBS render/output skips`; single-consumer Tencent Meeting=`device selected and moving frames rendered`; 10-minute run=`18,000 samples at 30.00fps`; idle black=`yes`; producer recovery=`yes`; app restart/reboot persistence/clean remove=`yes`; privileges=`admin install/remove for HKLM COM, non-admin runtime`. The accepted v1 contract was proven and unblocked Spike B/C at the completion of A2.
   - Corrective plan and full evidence: [Spike A2 — Frame Server multi-consumer recovery](2026-11-06-phase0-spike-a2-multiconsumer.md).
   - Deferred limitation: real applications cannot concurrently consume the same device. OBS-first left Tencent Meeting empty; Tencent-first left OBS black. A2 confirmed the failure occurs in Frame Server/client access-mode arbitration before the second source reaches streaming. Diagnostic consumers did share successfully; internal handoff was `0.200ms` average / `0.274ms` p95 and Frame Server/client delivery was `27.666ms` average / `28.390ms` p95. This evidence informs a future multi-consumer architecture decision but is not a v1 acceptance gate.
-- [Spike B — GPU sharing/fence/camera-handoff verdict]
+- Spike B: **NO-GO** — `copy_free_gpu=no`; `formats=D3D12→D3D11 {BGRA8,RGBA8,R8} only` (`NV12` failed and D3D11→D3D12 failed for all four tested formats); `fence_protocol=ok`; `sync_p95_ms=3.107`; `dml_binding=copy` (direct resource I/O binding exited with `0xC0000005`); `bgfx_native=no` (native imported-resource path exited with `0xC0000005`; bgfx-owned compute did run); `camera_gpu_sample=no` (D3D11 NV12 wrapped as an `IMFSample`, but Frame Server preservation was not proven; D3D12 NV12 returned `E_NOINTERFACE`); `fallback_readback_ipc_ms=4.502 p95` over 1,000 frames (`6.416ms` p95 in the 10-minute soak); `same_adapter=yes`; `total_p95_ms=n/a`; `fits_30fps=no`. On Iris Xe driver `32.0.101.7092`, 1,000 known-pattern round trips passed per-frame validation and the 18,000-frame fallback soak recorded four missed 33.3ms deadlines. The measured partial-copy component sum was `8.855ms` p95, but excludes capture/readback-to-DirectML, full-frame upload into bgfx, and Frame Server delivery, so it is not an end-to-end total. The planned GPU-resident chain is unsupported; Spike C and the v1 build plan remain gated.
+- Spike B2: **NO-GO** — `correctness=pass`; `d3d11_readback_p95_ms=6.375`; `bgfx_roundtrip_p95_ms=10.932`; `ring_publish_p95_ms=0.359`; producer-side `transport_total_p95_ms=22.014`; real camera `source_enqueue_p95_ms=16.439`, `frame_server_delivery_p95_ms=48.826`, and producer-to-client `p95_ms=78.099`; 1,000 valid MF frames had `0` skipped, `23` duplicate, and `0` marker/content errors; idle black began in `46.442ms`; producer recovery without reopening=`yes`; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 rendered the full moving 1920×1080 pattern separately; clean remove=`yes`; `product_30fps_proven=no`. The fallback proves synthetic 1080p30 throughput and application compatibility but exceeds the 33.3ms product budget before face ML and production beauty shaders. Full evidence: [Spike B/B2 — GPU handoff and CPU fallback](2026-11-10-phase0-spike-b2-fallback.md).
+- Spike B3: **NO-GO** — `wait_producer_to_client_p95_ms=79.820`, `immediate_producer_to_client_p95_ms=57.635`, `winner=immediate`, `wait_validity=pass`, `immediate_validity=pass`, `winner_recovery=yes`, `winner_apps=OBS moving pattern rendered / Tencent Meeting moving pattern rendered`, `winner_soak=not-run p95 gate`, `source_enqueue_boundary=unavailable`, `product_30fps_proven=no`.
 - [Spike C — face model verdict]
 
 ## Gate to v1 Build Plan
