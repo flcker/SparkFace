@@ -116,3 +116,10 @@ Budget must be **measured** on the iGPU reference machine, not estimated.
   `dev`. SemVer tags (`vX.Y.Z[-rc.N]`) per `git_rules`.
 - iGPU 30fps performance gate cannot run in public CI (no iGPU runner) — use a
   self-hosted iGPU runner or manual regression before merge.
+
+## End-to-End Workflow Authorization
+
+- Plans MUST cover the complete foreseeable workflow rather than stopping at routine phase boundaries.
+- Once the user approves a plan, that approval covers every explicitly listed branch creation, commit, push, PR creation, PR merge, and temporary-branch cleanup operation. Do not request confirmation again when reaching those listed steps.
+- Request fresh approval only when the scope changes, a conflict or failure requires a user choice, a force-push or history rewrite becomes necessary, or remote data not listed in the approved plan would be deleted.
+- If a required operation was not listed in the approved plan, present one revised end-to-end plan instead of serial one-step confirmations.
