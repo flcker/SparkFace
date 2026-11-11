@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "acquisition_root": "build/face-models",
+  "license_policy": {
+    "accepted_weight_licenses": [
+      "Apache-2.0",
+      "MIT",
+      "BSD-2-Clause",
+      "BSD-3-Clause"
+    ],
+    "commercial_use_required": true,
+    "code_license_alone_is_insufficient": true
+  },
+  "models": [
+    {
+      "id": "mediapipe-face-landmarker-478-f32-onnx",
+      "role": "primary",
+      "filename": "face_landmarker_Nx3x256x256.onnx",
+      "source": {
+        "repository": "https://github.com/yakhyo/mediapipe-face-mesh-onnx",
+        "commit": "3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+        "release_id": 361120202,
+        "release_asset_id": 494186501,
+        "download_url": "https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_landmarker_Nx3x256x256.onnx",
+        "source_readme_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+        "source_license_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+        "upstream_model": "MediaPipe Face Landmarker / Face Mesh V2",
+        "weight_provenance": "The pinned source README states that its ONNX graph is exported from its repository state dict, whose weights were read directly from Google's face_landmarks_detector.tflite extracted from face_landmarker.task."
+      },
+      "sha256": "111795f8703cdeb6d0c68a9f3cc966a0f23f8786bb00f4577a11f461fc4276ac",
+      "size_bytes": 4864717,
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial_use": "permitted",
+        "weight_evidence": "The pinned source README labels the project Apache-2.0, identifies these as shipped ONNX model files, and its License and attribution section states Apache-2.0 for the model and mesh topology. The immutable source LICENSE is retained verbatim.",
+        "evidence_urls": [
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+          "https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE"
+        ],
+        "retained_text": "licenses/yakhyo-mediapipe-face-mesh-onnx-Apache-2.0.txt"
+      },
+      "profile": {
+        "opset": 17,
+        "input_index": 0,
+        "landmark_output_index": 0,
+        "landmark_count": 478,
+        "dimensions": 3,
+        "coordinate_mode": "input_pixels",
+        "input": {
+          "node": "input",
+          "shape": [
+            "N",
+            3,
+            256,
+            256
+          ],
+          "width": 256,
+          "height": 256,
+          "layout": "nchw",
+          "channel_order": "rgb",
+          "scale": [
+            0.00392156862745098,
+            0.00392156862745098,
+            0.00392156862745098
+          ],
+          "bias": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "affine_normalization": "float32(value) / 255.0",
+          "face_roi": "One square face crop, expanded to 1.5 times the detector box long side and roll-aligned on the eye line before resize. This model is landmarks-only; it does not detect faces."
+        },
+        "outputs": [
+          {
+            "index": 0,
+            "node": "landmarks",
+            "shape": [
+              "N",
+              478,
+              3
+            ],
+            "landmark_count": 478,
+            "dimensions": 3,
+            "coordinate_mode": "input_pixels",
+            "postprocess": "x and y are 256-pixel crop coordinates; z uses the same crop-pixel scale. Points 0..467 use the MediaPipe Face Mesh topology; 468..477 are iris points."
+          },
+          {
+            "index": 1,
+            "node": "score",
+            "shape": [
+              "N",
+              1
+            ],
+            "meaning": "raw face-presence logit; apply sigmoid before thresholding"
+          }
+        ],
+        "compute_note": "The pinned source reports 113 MMac. This is the quality-first candidate; no DirectML latency claim is made before the Spike C measurement."
+      }
+    },
+    {
+      "id": "mediapipe-face-mesh-468-f32-onnx",
+      "role": "fallback",
+      "filename": "face_mesh_Nx3x192x192.onnx",
+      "source": {
+        "repository": "https://github.com/yakhyo/mediapipe-face-mesh-onnx",
+        "commit": "3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+        "release_id": 361120202,
+        "release_asset_id": 492768497,
+        "download_url": "https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_mesh_Nx3x192x192.onnx",
+        "source_readme_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+        "source_license_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+        "upstream_model": "MediaPipe Face Mesh",
+        "weight_provenance": "The pinned source README states that its ONNX graph is exported from its repository state dict and traces the weights to the MediaPipe Face Mesh TFLite model."
+      },
+      "sha256": "3ca77cf59c18e4da0eccb46695bf604683fa564253e3385892981a5c274fb10f",
+      "size_bytes": 2466068,
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial_use": "permitted",
+        "weight_evidence": "The pinned source README labels the project Apache-2.0, identifies this as a shipped ONNX model file, and its License and attribution section states Apache-2.0 for the model and mesh topology. The immutable source LICENSE is retained verbatim.",
+        "evidence_urls": [
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+          "https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE"
+        ],
+        "retained_text": "licenses/yakhyo-mediapipe-face-mesh-onnx-Apache-2.0.txt"
+      },
+      "profile": {
+        "opset": 17,
+        "input_index": 0,
+        "landmark_output_index": 0,
+        "landmark_count": 468,
+        "dimensions": 3,
+        "coordinate_mode": "input_pixels",
+        "input": {
+          "node": "input",
+          "shape": [
+            "N",
+            3,
+            192,
+            192
+          ],
+          "width": 192,
+          "height": 192,
+          "layout": "nchw",
+          "channel_order": "rgb",
+          "scale": [
+            0.00392156862745098,
+            0.00392156862745098,
+            0.00392156862745098
+          ],
+          "bias": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "affine_normalization": "float32(value) / 255.0",
+          "face_roi": "One square face crop, expanded to 1.5 times the detector box long side and roll-aligned on the eye line before resize. This model is landmarks-only; it does not detect faces."
+        },
+        "outputs": [
+          {
+            "index": 0,
+            "node": "landmarks",
+            "shape": [
+              "N",
+              468,
+              3
+            ],
+            "landmark_count": 468,
+            "dimensions": 3,
+            "coordinate_mode": "input_pixels",
+            "postprocess": "x and y are 192-pixel crop coordinates; z uses the same crop-pixel scale."
+          },
+          {
+            "index": 1,
+            "node": "score",
+            "shape": [
+              "N",
+              1
+            ],
+            "meaning": "raw face-presence logit; apply sigmoid before thresholding"
+          }
+        ],
+        "compute_note": "The pinned source reports 35 MMac, versus 113 MMac for the primary. It is the lighter fallback; no DirectML latency claim is made before the Spike C measurement."
+      }
+    }
+  ],
+  "overlay_test_still": {
+    "id": "met-elderly-man-full-face-cc0",
+    "role": "real_face_overlay_verification",
+    "filename": "elderly-man-full-face.jpg",
+    "ppm_filename": "elderly-man-full-face.ppm",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/8/82/-Elderly_Man%3B_Full_Face-_MET_37.14.52.jpg",
+    "source_page_url": "https://commons.wikimedia.org/w/index.php?title=File:-Elderly_Man%3B_Full_Face-_MET_37.14.52.jpg&oldid=824076779",
+    "sha256": "a849023ad4b6c7aec7ecd0a7d0c5c9df313e46b95f4c7be5ec021397e958fccc",
+      "size_bytes": 187865,
+      "dimensions": [
+        602,
+        768
+      ],
+      "crop_xywh": [
+        61,
+        60,
+        480,
+        480
+      ],
+      "crop_rationale": "The source portrait is 602x768, but the landmark models require a square face ROI. This centered 480x480 crop contains the face and upper head (approximately source x=170..420, y=130..440) with contextual margin.",
+      "license": {
+        "spdx": "CC0-1.0",
+        "commercial_use": "permitted",
+        "evidence": "The pinned Wikimedia Commons revision identifies this portrait as CC0 1.0 Universal and states it may be copied, modified, distributed, and performed commercially without permission."
+      },
+      "conversion": "fetch-models.ps1 verifies the source JPEG, deterministically crops crop_xywh, then writes an uncompressed binary P6 RGB PPM for the spike's PPM loader."
+    },
+  "rejected": [
+    {
+      "family": "InsightFace landmark106 / face-landmarks-2d-106",
+      "reason": "Rejected. A permissive repository or code license does not establish a commercial license for the pretrained weight. UniFace's current license-attribution page expressly classifies InsightFace Landmark106 weights as non-commercial."
+    },
+    {
+      "family": "unlicensed conversions and model-zoo mirrors",
+      "reason": "Rejected unless the downloadable weight itself has explicit Apache-2.0, MIT, or BSD-compatible evidence. A permissive conversion script or host repository alone is insufficient."
+    }
+  ]
+}
