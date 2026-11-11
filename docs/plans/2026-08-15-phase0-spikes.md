@@ -289,39 +289,37 @@ Retain the reproducible probe only on branch `spikes`. Record the measured verdi
 - Create: `spikes/face/CMakeLists.txt`
 - Create: `spikes/face/models/` (candidate ONNX models; large binaries stay out of Git with acquisition metadata in the manifest)
 
-**Hypothesis:** At least one lightweight face-landmark ONNX model runs on the Iris Xe iGPU via ONNX Runtime DirectML within ~5-8ms/frame at 1080p, with enough landmarks (≥68, ideally ~106-468) to drive natural face-reshape. (Spec §6.1 #5, §9 "face model final selection", §6.3 spike 3.)
+**Hypothesis:** At least one lightweight face-landmark ONNX model runs on the Iris Xe iGPU via ONNX Runtime DirectML within ~5-8ms/frame, with enough landmarks (≥68, ideally ~106-468) to drive natural face reshape. (Spec §6.1 #5, §9 "face model final selection", §6.3 spike 3.)
+
+**Result:** **NO-GO.** Both permissively licensed candidates produced sensible real-face landmarks, but neither met the `8.0ms` inference p95 gate. No model is selected for `core/face/`.
 
 **Interfaces:**
-- Consumes: Task 0 env (ONNX RT DirectML on the iGPU).
-- Produces: **Verdict C** — the **selected model** (name, landmark count, source, license) + measured per-frame latency on the iGPU + the fallback (lighter) model. This selection is consumed by the later v1 build plan's `core/face/` tasks.
+- Consumes: Task 0 env (ONNX Runtime DirectML on the iGPU).
+- Produces: **Verdict C** — measured latency and quality evidence for the 478-point quality candidate and 468-point lighter fallback candidate. Because both failed latency, it produces no selected model for the later v1 build plan.
 
-- [ ] **Step 1: Gather candidate models**
+- [x] **Step 1: Gather candidate models**
 
-Collect candidate ONNX face-landmark models (with license check — must be Apache-2.0/MIT-compatible):
-- MediaPipe Face Landmarker (468 landmarks) exported to ONNX (Apache-2.0).
-- A lighter 68-pt or 106-pt model (e.g., from an open, permissively-licensed source). Verify each model's license is compatible with Apache-2.; record it.
+Pinned the Apache-2.0 MediaPipe Face Landmarker 478-point ONNX model and the lighter Apache-2.0 MediaPipe Face Mesh 468-point ONNX model from `yakhyo/mediapipe-face-mesh-onnx@3bdf1e0d100a4c709766c051a0c9e9cdab1fed62`. Model binaries remain out of Git; immutable asset IDs, direct acquisition URLs, byte sizes, SHA-256 values, code and weight-license evidence, tensor profiles, and rejected non-commercial alternatives are retained on `spikes`.
 
-Place model files in `spikes/face/models/` (git-ignore large binaries).
+- [x] **Step 2: Write the benchmark harness**
 
-- [ ] **Step 2: Write the benchmark harness**
+The retained C++17 harness loads a pinned model through ONNX Runtime DirectML 1.24.4 on device 0 with CPU EP fallback disabled. It validates dynamic model shapes, performs deterministic PPM resize and normalization before timing, preallocates input/output tensors, warms up 10 frames, measures 100 `Ort::Session::Run` calls with QPC, reports p50/p95/p99/max and peak working set, and writes a landmark overlay after timing.
 
-`spikes/face/main.cpp`: load a model via `Ort::Session` with the DirectML execution provider (D3D12 device on the iGPU adapter, same as Spike B). Feed a 1080p test frame (NV12 or BGRA → convert to the model's input layout). Warm up 10 frames, then time 100 frames. Record `per_frame_ms` and peak working set.
+- [x] **Step 3: Run all candidates + record**
 
-- [ ] **Step 3: Run all candidates + record**
+On Intel Iris Xe driver `32.0.101.7092`, the 478-point primary candidate measured `11.5629ms` p50 / `15.5720ms` p95 and the 468-point fallback candidate measured `3.2740ms` p50 / `9.8847ms` p95. Both completed all 100 frames with finite outputs; both failed the `8.0ms` p95 gate.
 
-For each candidate: run the harness, record `{model, landmarks, license, per_frame_ms, vram_kb}`. Compute whether `per_frame_ms` fits the spec §2.2 face-ML budget line (~5-8ms).
+- [x] **Step 4: Visual quality sanity (landmarks on a real face)**
 
-- [ ] **Step 4: Visual quality sanity (landmarks on a real face)**
+Both candidates ran on a SHA-256-pinned CC0 Metropolitan Museum portrait cropped to the documented square face ROI. Generated overlays visibly aligned eyes, nose, mouth, and face contour; the 478-point candidate also localized iris points. Both quality gates passed.
 
-Run the top candidate(s) on a few real-face stills; overlay landmarks; confirm they land sensibly (eyes/mouth/jaw). This guards against a model that's fast but inaccurate (spec §6.1 #6). Record a subjective quality note (-3).
+- [x] **Step 5: Select + designate fallback**
 
-- [ ] **Step 5: Select + designate fallback**
+No model was selected. The 478-point quality candidate failed latency by `7.5720ms`; the lighter 468-point fallback candidate also failed by `1.8847ms`. Its passing median does not override the failed p95 gate.
 
-Pick the **lightest model that meets the latency budget AND has sensible landmark placement**. Designate a **fallback** (even lighter, if the primary busts the budget on weaker iGPUs). Record both with rationale.
+- [x] **Step 6: Record Verdict C and preserve evidence**
 
-- [ ] **Step 6: Record Verdict C and preserve evidence**
-
-Append to Verdict Log: `Spike C: GO — selected=<model name, N landmarks, license>, per_frame_ms_iGPU=<x>, quality=<0-3>, fallback=<model>`. If no candidate fits ~5-8ms with sensible landmarks, record NO-GO and flag (would force a heavier face-pipeline rethink). Submit the executable probe, strict manifest, reproduction instructions, model acquisition metadata, and measured result in an evidence PR to `spikes`; do not remove it after the verdict. Submit only the verdict-log documentation in a separate PR to `main`.
+Verdict C is **NO-GO**. Executable evidence, strict manifests, acquisition scripts, retained license text, reproduction instructions, measured results, and the NO-GO rationale are preserved under `spikes/face/` by evidence PR [#9](https://github.com/flcker/SparkFace/pull/9). Canonical detail: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
 
 ---
 
@@ -337,15 +335,15 @@ Append to Verdict Log: `Spike C: GO — selected=<model name, N landmarks, licen
 - Spike B2: **NO-GO** — `correctness=pass`; `d3d11_readback_p95_ms=6.375`; `bgfx_roundtrip_p95_ms=10.932`; `ring_publish_p95_ms=0.359`; producer-side `transport_total_p95_ms=22.014`; real camera `source_enqueue_p95_ms=16.439`, `frame_server_delivery_p95_ms=48.826`, and producer-to-client `p95_ms=78.099`; 1,000 valid MF frames had `0` skipped, `23` duplicate, and `0` marker/content errors; idle black began in `46.442ms`; producer recovery without reopening=`yes`; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 rendered the full moving 1920×1080 pattern separately; clean remove=`yes`; `product_30fps_proven=no`. The fallback proves synthetic 1080p30 throughput and application compatibility but exceeds the 33.3ms product budget before face ML and production beauty shaders. Full evidence: [Spike B/B2 — GPU handoff and CPU fallback](2026-11-10-phase0-spike-b2-fallback.md).
 - Spike B3: **NO-GO** — `wait_producer_to_client_p95_ms=79.820`, `immediate_producer_to_client_p95_ms=57.635`, `winner=immediate`, `wait_validity=pass`, `immediate_validity=pass`, `winner_recovery=yes`, `winner_apps=OBS moving pattern rendered / Tencent Meeting moving pattern rendered`, `winner_soak=not-run p95 gate`, `source_enqueue_boundary=unavailable`, `product_30fps_proven=no`.
 - Spike B4: **NO-GO** — `async_request_queue=yes`; `mf_frames=1000`; `mf_b4_diagnostic_frames=1000`; `mf_fps_achieved=26.644`; `producer_to_client_frame_age_p95_ms=48.758`; `source_wait_p95_ms=63.205`; `producer_fps=29.992`; producer `transport_total_p95_ms=22.920`; `skipped_sequences=125`; `duplicate_sequences=0`; `marker_errors=0`; recovery/apps/soak=`not-run automated gate failed`; `product_30fps_proven=no`. Asynchronous `RequestSample` removed the synchronous wait but did not meet either the 29.5fps or 33.3ms gate.
-- [Spike C — face model verdict]
+- Spike C: **NO-GO** — `selected_model=none`; 478-point Apache-2.0 primary candidate `p50_ms=11.5629`, `p95_ms=15.5720`, `quality=pass`; 468-point Apache-2.0 fallback candidate `p50_ms=3.2740`, `p95_ms=9.8847`, `quality=pass`; gate=`p95 <= 8.0ms`; `warmup_frames=10`; `measured_frames=100`; `provider=DmlExecutionProvider`; `cpu_ep_fallback=disabled`; adapter=`Intel Iris Xe 32.0.101.7092`. Full verdict: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
 
 ## Gate to v1 Build Plan
 
-The detailed v1 build plan is **blocked**. Spike A/A2 established an accepted single-consumer virtual-camera contract, but Spikes B, B2, B3, and B4 all returned **NO-GO** for the selected 1080p30 iGPU handoff architecture. Spike C may be measured independently, but it cannot unblock v1 planning.
+The detailed v1 build plan is **blocked**. Spike A/A2 established an accepted single-consumer virtual-camera contract, but Spikes B, B2, B3, and B4 all returned **NO-GO** for the selected 1080p30 iGPU handoff architecture, and Spike C returned **NO-GO** without selecting a face model.
 
 Before writing `docs/plans/<date>-v1-build.md`, make an explicit product/architecture decision that changes the failed constraint—such as the performance promise, default resolution, or transport architecture—and validate the replacement handoff with a GO or explicitly accepted GO-WITH-CAVEAT. The eventual build plan must be informed by:
 - the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
 - the measured GPU and CPU handoff limits from Spikes B through B4,
-- the selected face model and measured latency from Spike C.
+- Spike C's no-selection verdict and measured DirectML latency/quality evidence.
 
 Only after those gates are accepted should a second planning pass implement the modules in the [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) §3.
