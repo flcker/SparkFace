@@ -1,9 +1,9 @@
 diff --git a/VirtualCameraMediaSource/FallbackFrameSource.h b/VirtualCameraMediaSource/FallbackFrameSource.h
 new file mode 100644
-index 0000000..23d7e5f
+index 0000000000000000000000000000000000000000..7610a91ea5bc3b34167b1bbd050b143c602a0480
 --- /dev/null
 +++ b/VirtualCameraMediaSource/FallbackFrameSource.h
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,270 @@
 +// SPDX-License-Identifier: Apache-2.0
 +// SparkFace Phase-0 B2 adapter for the Microsoft Windows-Camera sample.
 +#pragma once
@@ -21,7 +21,7 @@ index 0000000..23d7e5f
 +    constexpr std::size_t FrameBytes = static_cast<std::size_t>(Width) * Height * 3 / 2;
 +    constexpr std::uint32_t SlotCount = 3;
 +    constexpr wchar_t RingFilePath[] = L"C:\\Users\\Public\\SparkFacePhase0B2Ring.bin";
-+    constexpr wchar_t ModeFilePath[] = L"C:\\Users\\Public\\SparkFacePhase0B2Mode.txt";
++    constexpr wchar_t FrameReadyEventName[] = L"Local\\SparkFacePhase0B2FrameReady";
 +    constexpr std::uint32_t Magic = 0x32424653U;
 +    constexpr std::uint32_t Version = 1;
 +
@@ -64,11 +64,6 @@ index 0000000..23d7e5f
 +    constexpr std::size_t SlotBytes = AlignUp(sizeof(SlotHeader) + FrameBytes, 64);
 +    constexpr std::size_t MappingBytes = HeaderBytes + SlotCount * SlotBytes;
 +
-+    enum class PacingMode
-+    {
-+        WaitForNextSequence,
-+        ImmediateLatest,
-+    };
 +
 +    class FrameSource
 +    {
@@ -104,9 +99,14 @@ index 0000000..23d7e5f
 +            WriteQpc(destination, SamplePayloadFinalizedQpcOffset, finalized.QuadPart);
 +        }
 +
-+        HRESULT CopyLatestOrBlack(BYTE* destination, DWORD length, LONG pitch,
-+            std::int64_t requestEntryQpc)
++        HRESULT CopyForWake(BYTE* destination, DWORD length, LONG pitch,
++            std::int64_t requestEntryQpc, bool deadlineWake, bool* delivered)
 +        {
++            if (delivered == nullptr)
++            {
++                return E_POINTER;
++            }
++            *delivered = false;
 +            if (destination == nullptr || pitch <= 0 ||
 +                length < static_cast<DWORD>(pitch) * Height * 3 / 2)
 +            {
@@ -115,34 +115,24 @@ index 0000000..23d7e5f
 +
 +            if (!EnsureOpen())
 +            {
-+                Sleep(33);
-+                FillBlack(destination, pitch);
++                if (deadlineWake)
++                {
++                    FillBlack(destination, pitch);
++                    *delivered = true;
++                }
 +                return S_OK;
 +            }
 +
 +            auto* header = static_cast<const RingHeader*>(m_view);
 +            auto* published = const_cast<volatile LONG64*>(&header->publishedSequence);
-+            LARGE_INTEGER now{};
-+            LONG64 latest = InterlockedCompareExchange64(published, 0, 0);
-+            if (m_mode == PacingMode::WaitForNextSequence)
-+            {
-+                LARGE_INTEGER waitStart{};
-+                QueryPerformanceCounter(&waitStart);
-+                while (latest == m_lastSequence || latest <= 0)
-+                {
-+                    QueryPerformanceCounter(&now);
-+                    if ((now.QuadPart - waitStart.QuadPart) * 1000 >=
-+                        header->qpcFrequency * 35)
-+                    {
-+                        break;
-+                    }
-+                    Sleep(1);
-+                    latest = InterlockedCompareExchange64(published, 0, 0);
-+                }
-+            }
++            const LONG64 latest = InterlockedCompareExchange64(published, 0, 0);
 +            if (latest <= 0)
 +            {
-+                FillBlack(destination, pitch);
++                if (deadlineWake)
++                {
++                    FillBlack(destination, pitch);
++                    *delivered = true;
++                }
 +                return S_OK;
 +            }
 +
@@ -152,18 +142,26 @@ index 0000000..23d7e5f
 +                base + HeaderBytes + static_cast<std::size_t>(index) * SlotBytes);
 +            auto* slotSequence = const_cast<volatile LONG64*>(&slot->sequence);
 +            const LONG64 before = InterlockedCompareExchange64(slotSequence, 0, 0);
++            LARGE_INTEGER now{};
 +            QueryPerformanceCounter(&now);
 +            const bool stale = slot->publishedQpc <= 0 ||
 +                (now.QuadPart - slot->publishedQpc) * 1000 > header->qpcFrequency * 66;
 +            if (before != latest)
 +            {
-+                FillBlack(destination, pitch);
++                return S_OK;
++            }
++            if (latest == m_lastSequence && !stale)
++            {
 +                return S_OK;
 +            }
 +            if (stale)
 +            {
 +                m_lastSequence = latest;
-+                FillBlack(destination, pitch);
++                if (deadlineWake)
++                {
++                    FillBlack(destination, pitch);
++                    *delivered = true;
++                }
 +                return S_OK;
 +            }
 +
@@ -186,22 +184,21 @@ index 0000000..23d7e5f
 +            const LONG64 after = InterlockedCompareExchange64(slotSequence, 0, 0);
 +            if (before != after)
 +            {
-+                FillBlack(destination, pitch);
++                return S_OK;
 +            }
-+            else
++
++            LARGE_INTEGER copyComplete{};
++            QueryPerformanceCounter(&copyComplete);
++            if (length >= DiagnosticBytes)
 +            {
-+                LARGE_INTEGER copyComplete{};
-+                QueryPerformanceCounter(&copyComplete);
-+                if (length >= DiagnosticBytes)
-+                {
-+                    WriteQpc(destination, SourceCopyCompleteQpcOffset, copyComplete.QuadPart);
-+                    WriteQpc(destination, PublishedQpcOffset, slot->publishedQpc);
-+                    WriteQpc(destination, RequestEntryQpcOffset, requestEntryQpc);
-+                    WriteQpc(destination, SequenceAcquiredQpcOffset, acquired.QuadPart);
-+                    WriteQpc(destination, CopyCompleteQpcOffset, copyComplete.QuadPart);
-+                }
-+                m_lastSequence = after;
++                WriteQpc(destination, SourceCopyCompleteQpcOffset, copyComplete.QuadPart);
++                WriteQpc(destination, PublishedQpcOffset, slot->publishedQpc);
++                WriteQpc(destination, RequestEntryQpcOffset, requestEntryQpc);
++                WriteQpc(destination, SequenceAcquiredQpcOffset, acquired.QuadPart);
++                WriteQpc(destination, CopyCompleteQpcOffset, copyComplete.QuadPart);
 +            }
++            m_lastSequence = after;
++            *delivered = true;
 +            return S_OK;
 +        }
 +
@@ -211,35 +208,12 @@ index 0000000..23d7e5f
 +            std::memcpy(destination + offset, &value, sizeof(value));
 +        }
 +
-+        void ReadPacingModeOnce()
-+        {
-+            HANDLE modeFile = CreateFileW(ModeFilePath, GENERIC_READ,
-+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-+                FILE_ATTRIBUTE_NORMAL, nullptr);
-+            if (modeFile == INVALID_HANDLE_VALUE)
-+            {
-+                return;
-+            }
-+            char value[16]{};
-+            DWORD bytesRead = 0;
-+            if (ReadFile(modeFile, value, sizeof(value) - 1, &bytesRead, nullptr) &&
-+                bytesRead >= 9 && std::memcmp(value, "immediate", 9) == 0)
-+            {
-+                m_mode = PacingMode::ImmediateLatest;
-+            }
-+            CloseHandle(modeFile);
-+        }
 +
 +        bool EnsureOpen()
 +        {
 +            if (m_view != nullptr)
 +            {
 +                return true;
-+            }
-+            if (!m_modeRead)
-+            {
-+                ReadPacingModeOnce();
-+                m_modeRead = true;
 +            }
 +            m_file = CreateFileW(RingFilePath, GENERIC_READ | GENERIC_WRITE,
 +                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
@@ -298,15 +272,13 @@ index 0000000..23d7e5f
 +        HANDLE m_mapping = nullptr;
 +        void* m_view = nullptr;
 +        LONG64 m_lastSequence = 0;
-+        PacingMode m_mode = PacingMode::WaitForNextSequence;
-+        bool m_modeRead = false;
 +    };
 +}
 diff --git a/VirtualCameraMediaSource/SimpleFrameGenerator.cpp b/VirtualCameraMediaSource/SimpleFrameGenerator.cpp
-index dde663f..81e96e2 100644
+index dde663f447ef2c5c14194e1236db0a4ac763ac15..5d468721f1a88f8074867a83d6863d0d736c50c2 100644
 --- a/VirtualCameraMediaSource/SimpleFrameGenerator.cpp
 +++ b/VirtualCameraMediaSource/SimpleFrameGenerator.cpp
-@@ -1,150 +1,36 @@
+@@ -1,150 +1,39 @@
  //
  // Copyright (C) Microsoft Corporation. All rights reserved.
 +// SparkFace Phase-0 B2 modifications licensed under Apache-2.0.
@@ -383,7 +355,9 @@ index dde663f..81e96e2 100644
 -    _In_ DWORD height,
 -    _In_ ULONG rgbMask )
 +    _In_ ULONG,
-+    _In_ std::int64_t requestEntryQpc)
++    _In_ std::int64_t requestEntryQpc,
++    _In_ bool deadlineWake,
++    _Out_ bool* delivered)
  {
      RETURN_HR_IF_NULL(E_INVALIDARG, pBuf);
 -    if (len < (abs(pitch) * height ))
@@ -416,7 +390,8 @@ index dde663f..81e96e2 100644
 -    *pY = ((66 * R + 129 * G + 25 * B + 128) >> 8) + 16;
 -    *pU = ((-38 * R - 74 * G + 112 * B + 128) >> 8) + 128;
 -    *pV = ((112 * R - 94 * G - 18 * B + 128) >> 8) + 128;
-+    return m_source.CopyLatestOrBlack(pBuf, len, pitch, requestEntryQpc);
++    return m_source.CopyForWake(
++        pBuf, len, pitch, requestEntryQpc, deadlineWake, delivered);
  }
  
 -void SimpleFrameGenerator::RGB24ToY(int R, int G, int B, BYTE* pY)
@@ -469,10 +444,10 @@ index dde663f..81e96e2 100644
 +    m_source.FinalizeSamplePayload(pBuf, len);
  }
 diff --git a/VirtualCameraMediaSource/SimpleFrameGenerator.h b/VirtualCameraMediaSource/SimpleFrameGenerator.h
-index f481ab6..5d63119 100644
+index f481ab6140e1b23bd9d899099d1c733f30ea1e03..61bf62d83a82dd860cc84d10498ee3cf36a16c2e 100644
 --- a/VirtualCameraMediaSource/SimpleFrameGenerator.h
 +++ b/VirtualCameraMediaSource/SimpleFrameGenerator.h
-@@ -1,46 +1,33 @@
+@@ -1,46 +1,35 @@
  //
  // Copyright (C) Microsoft Corporation. All rights reserved.
 +// SparkFace Phase-0 B2 modifications licensed under Apache-2.0.
@@ -515,7 +490,9 @@ index f481ab6..5d63119 100644
 -        _In_ DWORD height,
 -        _In_ ULONG rgbMask);
 +        _In_ ULONG rgbMask,
-+        _In_ std::int64_t requestEntryQpc);
++        _In_ std::int64_t requestEntryQpc,
++        _In_ bool deadlineWake,
++        _Out_ bool* delivered);
 +    void FinalizeSamplePayload(_Inout_updates_bytes_(len) BYTE* pBuf, _In_ DWORD len);
  
 +private:
@@ -529,7 +506,7 @@ index f481ab6..5d63119 100644
  #endif
 -
 diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
-index afcc864..80edc51 100644
+index afcc864e231140214b745737c126e2bf0f885806..bf6dbc635449abeb64dd0cb4e623765f5f04ba2a 100644
 --- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
 +++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
 @@ -4,8 +4,8 @@
@@ -571,28 +548,467 @@ index afcc864..80edc51 100644
  
          RETURN_IF_FAILED(MFCreateAttributes(&m_spAttributes, 10));
          RETURN_IF_FAILED(_SetStreamAttributes(m_spAttributes.get()));
-@@ -184,6 +172,8 @@ namespace winrt::WindowsSample::implementation
-             _In_ IUnknown* pToken
+@@ -181,51 +169,74 @@ namespace winrt::WindowsSample::implementation
+     }
+ 
+     IFACEMETHODIMP SimpleMediaStream::RequestSample(
+-            _In_ IUnknown* pToken
++            _In_opt_ IUnknown* pToken
          )
      {
 +        LARGE_INTEGER requestEntry{};
 +        QueryPerformanceCounter(&requestEntry);
          winrt::slim_lock_guard lock(m_Lock);
-         wil::com_ptr_nothrow<IMFSample> sample;
-         wil::com_ptr_nothrow<IMFMediaBuffer> outputBuffer;
-@@ -210,7 +200,9 @@ namespace winrt::WindowsSample::implementation
-             &bufferLength));
-         
+-        wil::com_ptr_nothrow<IMFSample> sample;
+-        wil::com_ptr_nothrow<IMFMediaBuffer> outputBuffer;
+-        LONG pitch = 0;
+-        BYTE* bufferStart = nullptr; // not used
+-        DWORD bufferLength = 0;
+-        BYTE* pbuf = nullptr;
+-        wil::com_ptr_nothrow<IMF2DBuffer2> buffer2D;
+ 
+         RETURN_IF_FAILED(_CheckShutdownRequiresLock());
+-
+         if (m_streamState != MF_STREAM_STATE_RUNNING)
+         {
+-            RETURN_HR_MSG(MF_E_INVALIDREQUEST, "Stream is not in running state, state:%d, selected: %d", m_streamState, m_bSelected);
++            return MF_E_MEDIA_SOURCE_WRONGSTATE;
++        }
++        if (m_pendingCount == PendingRequestCapacity)
++        {
++            return MF_E_NOTACCEPTING;
+         }
+ 
+-        RETURN_IF_FAILED(m_spSampleAllocator->AllocateSample(&sample));
+-        RETURN_IF_FAILED(sample->GetBufferByIndex(0, &outputBuffer));
+-        RETURN_IF_FAILED(outputBuffer->QueryInterface(IID_PPV_ARGS(&buffer2D)));
+-        RETURN_IF_FAILED(buffer2D->Lock2DSize(MF2DBuffer_LockFlags_Write,
+-            &pbuf,
+-            &pitch,
+-            &bufferStart,
+-            &bufferLength));
+-        
++        const std::size_t tail = (m_pendingHead + m_pendingCount) % PendingRequestCapacity;
++        m_pendingRequests[tail].token = pToken;
++        m_pendingRequests[tail].requestEntryQpc = requestEntry.QuadPart;
++        ++m_pendingCount;
++        return S_OK;
++    }
  
 -        RETURN_IF_FAILED(m_spFrameGenerator->CreateFrame(pbuf, bufferLength, pitch, m_rgbMask));
-+        RETURN_IF_FAILED(m_spFrameGenerator->CreateFrame(
-+            pbuf, bufferLength, pitch, m_rgbMask, requestEntry.QuadPart));
-+        m_spFrameGenerator->FinalizeSamplePayload(pbuf, bufferLength);
-         //RETURN_IF_FAILED(WriteSampleData(pbuf, bufferLength, pitch, NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
-         RETURN_IF_FAILED(buffer2D->Unlock2D());
+-        //RETURN_IF_FAILED(WriteSampleData(pbuf, bufferLength, pitch, NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
+-        RETURN_IF_FAILED(buffer2D->Unlock2D());
++    IFACEMETHODIMP SimpleMediaStream::GetParameters(
++            _Out_ DWORD* pdwFlags,
++            _Out_ DWORD* pdwQueue
++        )
++    {
++        RETURN_HR_IF_NULL(E_POINTER, pdwFlags);
++        RETURN_HR_IF_NULL(E_POINTER, pdwQueue);
++        *pdwFlags = 0;
++        *pdwQueue = m_workQueue;
++        return S_OK;
++    }
  
+-        RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
+-        RETURN_IF_FAILED(sample->SetSampleDuration(333333));
+-        if (pToken != nullptr)
++    IFACEMETHODIMP SimpleMediaStream::Invoke(_In_ IMFAsyncResult* pAsyncResult)
++    {
++        winrt::slim_lock_guard lock(m_Lock);
++        if (m_bIsShutdown)
+         {
+-            RETURN_IF_FAILED(sample->SetUnknown(MFSampleExtension_Token, pToken));
++            return S_OK;
+         }
+-        RETURN_IF_FAILED(m_spEventQueue->QueueEventParamUnk(MEMediaSample,
+-            GUID_NULL,
+-            S_OK,
+-            sample.get()));
+ 
+-        return S_OK;
++        bool deadlineWake = false;
++        if (pAsyncResult == m_spFrameReadyResult.get())
++        {
++            m_frameReadyArmed = false;
++        }
++        else if (pAsyncResult == m_spDeadlineResult.get())
++        {
++            m_deadlineArmed = false;
++            deadlineWake = true;
++        }
++        else
++        {
++            return E_UNEXPECTED;
++        }
++
++        if (m_streamState != MF_STREAM_STATE_RUNNING)
++        {
++            return S_OK;
++        }
++
++        const HRESULT deliveryResult = DeliverPendingSampleRequiresLock(deadlineWake);
++        const HRESULT armResult = ArmWaitsRequiresLock();
++        RETURN_IF_FAILED(deliveryResult);
++        return armResult;
+     }
+ 
+     //////////////////////////////////////////////////////////////////////////////////////////
+@@ -247,6 +258,7 @@ namespace winrt::WindowsSample::implementation
+             {
+                 return MF_E_INVALID_STATE_TRANSITION;
+             }
++            CancelWaitsRequiresLock();
+             m_streamState = MF_STREAM_STATE_PAUSED;
+             break;
+ 
+@@ -319,6 +331,26 @@ namespace winrt::WindowsSample::implementation
+         winrt::slim_lock_guard lock(m_Lock);
+ 
+         m_bIsShutdown = true;
++        CancelWaitsRequiresLock();
++        FlushRequestsRequiresLock();
++        m_spDeadlineResult.reset();
++        m_spFrameReadyResult.reset();
++        if (m_deadlineTimer != nullptr)
++        {
++            CloseHandle(m_deadlineTimer);
++            m_deadlineTimer = nullptr;
++        }
++        if (m_frameReadyEvent != nullptr)
++        {
++            CloseHandle(m_frameReadyEvent);
++            m_frameReadyEvent = nullptr;
++        }
++        if (m_workQueueAllocated)
++        {
++            MFUnlockWorkQueue(m_workQueue);
++            m_workQueueAllocated = false;
++            m_workQueue = MFASYNC_CALLBACK_QUEUE_STANDARD;
++        }
+         m_parent.reset();
+ 
+         if (m_spEventQueue != nullptr)
+@@ -329,9 +361,7 @@ namespace winrt::WindowsSample::implementation
+ 
+         m_spAttributes.reset();
+         m_spStreamDesc.reset();
+-
+         m_streamState = MF_STREAM_STATE_STOPPED;
+-
+         return S_OK;
+     }
+ 
+@@ -369,6 +399,179 @@ namespace winrt::WindowsSample::implementation
+         return S_OK;
+     }
+ 
++    _Requires_lock_held_(m_Lock)
++    HRESULT SimpleMediaStream::InitializeAsyncInfrastructureRequiresLock()
++    {
++        if (m_workQueueAllocated)
++        {
++            return S_OK;
++        }
++
++        m_frameReadyEvent = CreateEventW(
++            nullptr, FALSE, FALSE, SparkFaceFallback::FrameReadyEventName);
++        m_deadlineTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
++        if (m_frameReadyEvent == nullptr || m_deadlineTimer == nullptr)
++        {
++            const HRESULT result = HRESULT_FROM_WIN32(GetLastError());
++            if (m_frameReadyEvent != nullptr)
++            {
++                CloseHandle(m_frameReadyEvent);
++                m_frameReadyEvent = nullptr;
++            }
++            if (m_deadlineTimer != nullptr)
++            {
++                CloseHandle(m_deadlineTimer);
++                m_deadlineTimer = nullptr;
++            }
++            return result;
++        }
++
++        HRESULT result = MFAllocateSerialWorkQueue(
++            MFASYNC_CALLBACK_QUEUE_STANDARD, &m_workQueue);
++        if (FAILED(result))
++        {
++            CloseHandle(m_deadlineTimer);
++            CloseHandle(m_frameReadyEvent);
++            m_deadlineTimer = nullptr;
++            m_frameReadyEvent = nullptr;
++            return result;
++        }
++        m_workQueueAllocated = true;
++
++        result = MFCreateAsyncResult(nullptr, this, nullptr, &m_spFrameReadyResult);
++        if (SUCCEEDED(result))
++        {
++            result = MFCreateAsyncResult(nullptr, this, nullptr, &m_spDeadlineResult);
++        }
++        if (FAILED(result))
++        {
++            m_spDeadlineResult.reset();
++            m_spFrameReadyResult.reset();
++            MFUnlockWorkQueue(m_workQueue);
++            m_workQueueAllocated = false;
++            m_workQueue = MFASYNC_CALLBACK_QUEUE_STANDARD;
++            CloseHandle(m_deadlineTimer);
++            CloseHandle(m_frameReadyEvent);
++            m_deadlineTimer = nullptr;
++            m_frameReadyEvent = nullptr;
++        }
++        return result;
++    }
++
++    _Requires_lock_held_(m_Lock)
++    HRESULT SimpleMediaStream::ArmWaitsRequiresLock()
++    {
++        if (!m_frameReadyArmed)
++        {
++            RETURN_IF_FAILED(MFPutWaitingWorkItem(
++                m_frameReadyEvent, 0, m_spFrameReadyResult.get(), &m_frameReadyKey));
++            m_frameReadyArmed = true;
++        }
++        if (!m_deadlineArmed)
++        {
++            const HRESULT result = MFPutWaitingWorkItem(
++                m_deadlineTimer, 0, m_spDeadlineResult.get(), &m_deadlineKey);
++            if (FAILED(result))
++            {
++                MFCancelWorkItem(m_frameReadyKey);
++                m_frameReadyArmed = false;
++                return result;
++            }
++            m_deadlineArmed = true;
++        }
++        return S_OK;
++    }
++
++    _Requires_lock_held_(m_Lock)
++    void SimpleMediaStream::CancelWaitsRequiresLock()
++    {
++        if (m_frameReadyArmed)
++        {
++            MFCancelWorkItem(m_frameReadyKey);
++            m_frameReadyArmed = false;
++        }
++        if (m_deadlineArmed)
++        {
++            MFCancelWorkItem(m_deadlineKey);
++            m_deadlineArmed = false;
++        }
++        if (m_deadlineTimer != nullptr)
++        {
++            CancelWaitableTimer(m_deadlineTimer);
++        }
++    }
++
++    _Requires_lock_held_(m_Lock)
++    void SimpleMediaStream::FlushRequestsRequiresLock()
++    {
++        for (auto& request : m_pendingRequests)
++        {
++            request.token.reset();
++            request.requestEntryQpc = 0;
++        }
++        m_pendingHead = 0;
++        m_pendingCount = 0;
++    }
++
++    _Requires_lock_held_(m_Lock)
++    HRESULT SimpleMediaStream::DeliverPendingSampleRequiresLock(bool deadlineWake)
++    {
++        if (m_pendingCount == 0)
++        {
++            return S_OK;
++        }
++
++        PendingRequest& request = m_pendingRequests[m_pendingHead];
++        wil::com_ptr_nothrow<IMFSample> sample;
++        wil::com_ptr_nothrow<IMFMediaBuffer> outputBuffer;
++        wil::com_ptr_nothrow<IMF2DBuffer2> buffer2D;
++        RETURN_IF_FAILED(m_spSampleAllocator->AllocateSample(&sample));
++        RETURN_IF_FAILED(sample->GetBufferByIndex(0, &outputBuffer));
++        RETURN_IF_FAILED(outputBuffer->QueryInterface(IID_PPV_ARGS(&buffer2D)));
++
++        LONG pitch = 0;
++        BYTE* bufferStart = nullptr;
++        DWORD bufferLength = 0;
++        BYTE* buffer = nullptr;
++        RETURN_IF_FAILED(buffer2D->Lock2DSize(
++            MF2DBuffer_LockFlags_Write, &buffer, &pitch, &bufferStart, &bufferLength));
++
++        bool delivered = false;
++        HRESULT result = m_spFrameGenerator->CreateFrame(
++            buffer, bufferLength, pitch, m_rgbMask, request.requestEntryQpc,
++            deadlineWake, &delivered);
++        if (SUCCEEDED(result) && delivered)
++        {
++            m_spFrameGenerator->FinalizeSamplePayload(buffer, bufferLength);
++        }
++        const HRESULT unlockResult = buffer2D->Unlock2D();
++        if (FAILED(result))
++        {
++            return result;
++        }
++        RETURN_IF_FAILED(unlockResult);
++        if (!delivered)
++        {
++            return S_OK;
++        }
++
++        RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
++        RETURN_IF_FAILED(sample->SetSampleDuration(333333));
++        if (request.token != nullptr)
++        {
++            RETURN_IF_FAILED(sample->SetUnknown(
++                MFSampleExtension_Token, request.token.get()));
++        }
++        RETURN_IF_FAILED(m_spEventQueue->QueueEventParamUnk(
++            MEMediaSample, GUID_NULL, S_OK, sample.get()));
++
++        request.token.reset();
++        request.requestEntryQpc = 0;
++        m_pendingHead = (m_pendingHead + 1) % PendingRequestCapacity;
++        --m_pendingCount;
++        return S_OK;
++    }
++
+     HRESULT SimpleMediaStream::_SetStreamAttributes(
+             _In_ IMFAttributes* pAttributeStore
+         )
+@@ -439,31 +642,43 @@ namespace winrt::WindowsSample::implementation
+             RETURN_IF_FAILED(m_spFrameGenerator->Initialize(m_spMediaType.get()));
+         }
+ 
+-        if (bSendEvent)
++        RETURN_IF_FAILED(InitializeAsyncInfrastructureRequiresLock());
++        LARGE_INTEGER dueTime{};
++        dueTime.QuadPart = -333333;
++        if (!SetWaitableTimer(m_deadlineTimer, &dueTime, 33, nullptr, nullptr, FALSE))
+         {
+-            // Post MEStreamStarted event to signal stream has started 
+-            RETURN_IF_FAILED(m_spEventQueue->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr));
++            return HRESULT_FROM_WIN32(GetLastError());
+         }
+ 
+-        // Set stream state
+         m_streamState = MF_STREAM_STATE_RUNNING;
++        const HRESULT armResult = ArmWaitsRequiresLock();
++        if (FAILED(armResult))
++        {
++            CancelWaitsRequiresLock();
++            m_streamState = MF_STREAM_STATE_STOPPED;
++            return armResult;
++        }
+ 
++        if (bSendEvent)
++        {
++            RETURN_IF_FAILED(m_spEventQueue->QueueEventParamVar(
++                MEStreamStarted, GUID_NULL, S_OK, nullptr));
++        }
+         return S_OK;
+     }
+ 
+     _Requires_lock_held_(m_Lock)
+     HRESULT SimpleMediaStream::StopInternal(bool bSendEvent)
+     {
+-        // Set stream state
++        CancelWaitsRequiresLock();
++        FlushRequestsRequiresLock();
+         m_streamState = MF_STREAM_STATE_STOPPED;
+ 
+-        // NOTE: if implementation has sampleRequestQueue or sampleQueue, it must flush the queue on stopped.
+         if (bSendEvent)
+         {
+-            // Post MEStreamStopped event to signal stream has stopped
+-            RETURN_IF_FAILED(m_spEventQueue->QueueEventParamVar(MEStreamStopped, GUID_NULL, S_OK, nullptr));
++            RETURN_IF_FAILED(m_spEventQueue->QueueEventParamVar(
++                MEStreamStopped, GUID_NULL, S_OK, nullptr));
+         }
+-
+         return S_OK;
+     }
+ }
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.h b/VirtualCameraMediaSource/SimpleMediaStream.h
+index 292866b541a3df676f241a99ae3e3dede211cc12..9020682a7416fcde581550ce489449ae800c0953 100644
+--- a/VirtualCameraMediaSource/SimpleMediaStream.h
++++ b/VirtualCameraMediaSource/SimpleMediaStream.h
+@@ -5,12 +5,15 @@
+ #ifndef SIMPLEMEDIASTREAM_H
+ #define SIMPLEMEDIASTREAM_H
+ 
++#include <array>
++#include <cstdint>
++
+ #include "SimpleMediaSource.h"
+ #include "VirtualCameraMediaSource.h"
+ 
+ namespace winrt::WindowsSample::implementation
+ {
+-    struct SimpleMediaStream : winrt::implements<SimpleMediaStream, IMFMediaStream2>
++    struct SimpleMediaStream : winrt::implements<SimpleMediaStream, IMFMediaStream2, IMFAsyncCallback>
+     {
+         friend struct SimpleMediaSource;
+ 
+@@ -24,7 +27,11 @@ namespace winrt::WindowsSample::implementation
+         // IMFMediaStream
+         IFACEMETHODIMP GetMediaSource(IMFMediaSource** ppMediaSource) override;
+         IFACEMETHODIMP GetStreamDescriptor(IMFStreamDescriptor** ppStreamDescriptor) override;
+-        IFACEMETHODIMP RequestSample(IUnknown* pToken) override;
++        IFACEMETHODIMP RequestSample(_In_opt_ IUnknown* pToken) override;
++
++        // IMFAsyncCallback
++        IFACEMETHODIMP GetParameters(DWORD* pdwFlags, DWORD* pdwQueue) override;
++        IFACEMETHODIMP Invoke(IMFAsyncResult* pAsyncResult) override;
+ 
+         // IMFMediaStream2
+         IFACEMETHODIMP SetStreamState(_In_ MF_STREAM_STATE state) override;
+@@ -52,6 +59,18 @@ namespace winrt::WindowsSample::implementation
+         _Requires_lock_held_(m_Lock) HRESULT StartInternal(bool bSendEvent, IMFMediaType* pNewMediaType);
+         _Requires_lock_held_(m_Lock) HRESULT StopInternal(bool bSendEvent);
+ 
++        struct PendingRequest
++        {
++            wil::com_ptr_nothrow<IUnknown> token;
++            std::int64_t requestEntryQpc = 0;
++        };
++
++        _Requires_lock_held_(m_Lock) HRESULT InitializeAsyncInfrastructureRequiresLock();
++        _Requires_lock_held_(m_Lock) HRESULT ArmWaitsRequiresLock();
++        _Requires_lock_held_(m_Lock) void CancelWaitsRequiresLock();
++        _Requires_lock_held_(m_Lock) void FlushRequestsRequiresLock();
++        _Requires_lock_held_(m_Lock) HRESULT DeliverPendingSampleRequiresLock(bool deadlineWake);
++
+         winrt::slim_mutex  m_Lock;
+ 
+         wil::com_ptr_nothrow<IMFMediaSource> m_parent;
+@@ -62,6 +81,21 @@ namespace winrt::WindowsSample::implementation
+         wistd::unique_ptr<SimpleFrameGenerator> m_spFrameGenerator;
+         wil::com_ptr_nothrow<IMFMediaType> m_spMediaType;
+ 
++        static constexpr std::size_t PendingRequestCapacity = 16;
++        std::array<PendingRequest, PendingRequestCapacity> m_pendingRequests{};
++        std::size_t m_pendingHead = 0;
++        std::size_t m_pendingCount = 0;
++        HANDLE m_frameReadyEvent = nullptr;
++        HANDLE m_deadlineTimer = nullptr;
++        DWORD m_workQueue = MFASYNC_CALLBACK_QUEUE_STANDARD;
++        bool m_workQueueAllocated = false;
++        wil::com_ptr_nothrow<IMFAsyncResult> m_spFrameReadyResult;
++        wil::com_ptr_nothrow<IMFAsyncResult> m_spDeadlineResult;
++        MFWORKITEM_KEY m_frameReadyKey = 0;
++        MFWORKITEM_KEY m_deadlineKey = 0;
++        bool m_frameReadyArmed = false;
++        bool m_deadlineArmed = false;
++
+         bool m_bIsShutdown = false;
+         bool m_bSelected = false;
+         MF_STREAM_STATE m_streamState = MF_STREAM_STATE_STOPPED;
 diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.h b/VirtualCameraMediaSource/VirtualCameraMediaSource.h
-index c59fecb..5ade9c0 100644
+index c59fecb315242cd19b5d7ffff1d30f39b47904ab..5ade9c044c0cb0b6e6f6074ffc0e845d9e7cb187 100644
 --- a/VirtualCameraMediaSource/VirtualCameraMediaSource.h
 +++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.h
 @@ -8,12 +8,12 @@
@@ -614,7 +1030,7 @@ index c59fecb..5ade9c0 100644
  // The below 2 GUIDs are defined in Windows build 22621 and above only, 
  // if targetting SDK for Windows 22621 or higher this would need to be commented out.
 diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
-index 8ad4a86..1ef06b4 100644
+index 8ad4a86d13ee41dd7cb402e69cc2dcfa032e8dd1..1ef06b4f5c66932b3a2ee7fd758981169cceda93 100644
 --- a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
 +++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
 @@ -59,6 +59,7 @@
@@ -626,7 +1042,7 @@ index 8ad4a86..1ef06b4 100644
      <ClInclude Include="HWMediaStream.h" />
      <ClInclude Include="pch.h" />
 diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSourceActivate.h b/VirtualCameraMediaSource/VirtualCameraMediaSourceActivate.h
-index 16d3c35..27b2c78 100644
+index 16d3c350028f0737021f91d37f172af19c4c018a..27b2c7828e8c284cc0c2ccdc94aa1227ed1cbcc4 100644
 --- a/VirtualCameraMediaSource/VirtualCameraMediaSourceActivate.h
 +++ b/VirtualCameraMediaSource/VirtualCameraMediaSourceActivate.h
 @@ -8,7 +8,7 @@

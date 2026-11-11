@@ -128,7 +128,7 @@ void print_distribution(const char* name, const std::vector<double>& values) {
 struct Options {
     std::uint64_t frames = 1000;
     bool expect_recovery = false;
-    std::string pacing_mode = "wait";
+    std::string pacing_mode = "async";
 };
 
 Options parse_options(int argc, wchar_t** argv) {
@@ -140,17 +140,15 @@ Options parse_options(int argc, wchar_t** argv) {
             options.expect_recovery = true;
         } else if (std::wstring_view(argv[i]) == L"--pacing-mode" && i + 1 < argc) {
             const std::wstring_view mode(argv[++i]);
-            if (mode == L"wait") {
-                options.pacing_mode = "wait";
-            } else if (mode == L"immediate") {
-                options.pacing_mode = "immediate";
+            if (mode == L"async") {
+                options.pacing_mode = "async";
             } else {
-                throw std::runtime_error("--pacing-mode must be wait or immediate");
+                throw std::runtime_error("--pacing-mode must be async");
             }
         } else {
             throw std::runtime_error(
                 "Usage: fallback_mf_consumer [--frames N] [--expect-recovery] "
-                "[--pacing-mode wait|immediate]");
+                "[--pacing-mode async]");
         }
     }
     return options;
@@ -218,6 +216,7 @@ int wmain(int argc, wchar_t** argv) {
         bool recovered = false;
         std::int64_t last_valid_qpc = 0;
         double idle_black_ms = -1.0;
+        const std::int64_t measurement_start_qpc = qpc_now();
         while (received < target) {
             DWORD stream = 0;
             DWORD flags = 0;
@@ -323,16 +322,21 @@ int wmain(int argc, wchar_t** argv) {
             producer_to_client_frame_age_ms.push_back(qpc_ms(producer_qpc, delivered_qpc));
             ++received;
         }
+        const std::int64_t measurement_end_qpc = qpc_now();
+        const double measurement_ms =
+            qpc_ms(measurement_start_qpc, measurement_end_qpc);
+        const double achieved_fps = received * 1000.0 / measurement_ms;
 
-        check_hresult(source->Shutdown(), "IMFMediaSource::Shutdown");
-        activation->ShutdownObject();
+        reader.Reset();
+        source.Reset();
+        check_hresult(activation->ShutdownObject(), "IMFActivate::ShutdownObject");
         if (options.expect_recovery && (idle_black_frames < 3 || !recovered)) {
             throw std::runtime_error("Expected idle black frames and producer recovery");
         }
         std::cout << std::fixed << std::setprecision(3)
                   << "mf_frames=" << received << '\n'
                   << "mf_pacing_mode=" << options.pacing_mode << '\n'
-                  << "mf_b3_diagnostic_frames=" << source_wait_ms.size() << '\n'
+                  << "mf_b4_diagnostic_frames=" << source_wait_ms.size() << '\n'
                   << "mf_published_after_request_sequences="
                   << published_after_request_sequences << '\n'
                   << "mf_skipped_sequences=" << skipped << '\n'
@@ -340,7 +344,9 @@ int wmain(int argc, wchar_t** argv) {
                   << "mf_idle_black_frames=" << idle_black_frames << '\n'
                   << "idle_black_ms=" << idle_black_ms << '\n'
                   << "recovery=" << (recovered ? "yes" : "no") << '\n'
-                  << "mf_marker_errors=" << marker_errors << '\n';
+                  << "mf_marker_errors=" << marker_errors << '\n'
+                  << "mf_elapsed_ms=" << measurement_ms << '\n'
+                  << "mf_fps_achieved=" << achieved_fps << '\n';
         print_distribution("producer_to_publish", producer_to_publish_ms);
         print_distribution("published_age_at_request", published_age_at_request_ms);
         print_distribution("source_wait", source_wait_ms);
