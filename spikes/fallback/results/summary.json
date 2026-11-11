@@ -1,0 +1,41 @@
+{
+  "outcome": "NO-GO",
+  "b2": {
+    "correctness": "pass",
+    "d3d11_readback_p95_ms": 6.375,
+    "bgfx_roundtrip_p95_ms": 10.932,
+    "ring_publish_p95_ms": 0.359,
+    "transport_total_p95_ms": 22.014,
+    "source_enqueue_p95_ms": 16.439,
+    "frame_server_delivery_p95_ms": 48.826,
+    "producer_to_client_frame_age_p95_ms": 78.099,
+    "skipped_sequences": 0,
+    "duplicate_sequences": 23,
+    "marker_errors": 0,
+    "idle_black_ms": 46.442,
+    "recovery": true,
+    "apps": ["OBS Studio 33.0.0", "Tencent Meeting 3.47.2.405"]
+  },
+  "b3": {
+    "wait_producer_to_client_p95_ms": 79.820,
+    "immediate_producer_to_client_p95_ms": 57.635,
+    "winner": "immediate",
+    "wait_validity": "pass",
+    "immediate_validity": "pass",
+    "winner_recovery": true,
+    "winner_soak": "not-run p95 gate"
+  },
+  "b4": {
+    "mf_frames": 1000,
+    "mf_b4_diagnostic_frames": 1000,
+    "fps_achieved": 26.644,
+    "producer_to_client_frame_age_p95_ms": 48.758,
+    "source_wait_p95_ms": 63.205,
+    "producer_fps": 29.992,
+    "transport_total_p95_ms": 22.920,
+    "skipped_sequences": 125,
+    "duplicate_sequences": 0,
+    "marker_errors": 0
+  },
+  "source": "spikes/fallback/README.md"
+}

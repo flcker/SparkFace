@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "env",
+  "title": "Windows 11 build-environment gate",
+  "status": "completed",
+  "upstream": {
+    "onnxruntime_directml": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg",
+    "bgfx": "vcpkg 1.129.8940-496#1"
+  },
+  "hardware": "Intel Iris Xe reference workstation; Windows build 26300",
+  "dependencies": [
+    "CMake 4.4.3",
+    "MSVC 19.51.36256",
+    "Windows SDK 10.0.26100.0",
+    "ONNX Runtime DirectML 1.24.4"
+  ],
+  "artifacts": [
+    {
+      "name": "Microsoft.ML.OnnxRuntime.DirectML",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg",
+      "version": "1.24.4",
+      "sha256": "57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681",
+      "license": "MIT",
+      "acquire": "CMake FetchContent during configure"
+    },
+    {
+      "name": "ONNX Runtime mul_1 test model",
+      "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.4/onnxruntime/test/testdata/mul_1.onnx",
+      "version": "1.24.4",
+      "sha256": "71f431c4e9321ec6fbeb158d02ed240459a7dcc98673fa79a4f439ce42efaf10",
+      "license": "MIT",
+      "acquire": "CMake file(DOWNLOAD) during configure"
+    }
+  ],
+  "commands": {
+    "build": [".\\scripts\\build-phase0-env.ps1"],
+    "run": [".\\scripts\\build-phase0-env.ps1 -Run"],
+    "cleanup": ["Remove-Item -Recurse -Force .\\build\\windows-x64-debug -ErrorAction SilentlyContinue"]
+  },
+  "gates": {
+    "os_build": ">=22000",
+    "adapter": "Intel Iris Xe",
+    "directml": "CPU fallback disabled"
+  },
+  "verdict": {
+    "outcome": "GO",
+    "source": "docs/plans/2026-08-15-phase0-spikes.md"
+  }
+}

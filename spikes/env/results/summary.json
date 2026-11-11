@@ -1,0 +1,12 @@
+{
+  "outcome": "GO",
+  "observed": {
+    "windows_build": 26300,
+    "adapter": "Intel Iris Xe 32.0.101.7088",
+    "bgfx": "Direct3D 12",
+    "mf_create_virtual_camera": "available",
+    "directml_output": 2,
+    "cpu_fallback": "disabled"
+  },
+  "source": "docs/plans/2026-08-15-phase0-spikes.md"
+}
