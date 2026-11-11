@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** De-risk the three load-bearing unknowns of SparkFace v1 (Windows 11 Media Foundation user-mode virtual camera, D3D11↔D3D12 GPU interop and virtual-camera handoff, face-model iGPU/DirectML performance) via throwaway feasibility probes with hard pass/fail criteria — before writing the detailed v1 build plan.
+**Goal:** De-risk the three load-bearing unknowns of SparkFace v1 (Windows 11 Media Foundation user-mode virtual camera, D3D11↔D3D12 GPU interop and virtual-camera handoff, face-model iGPU/DirectML performance) through durable feasibility probes with hard pass/fail criteria — before writing the detailed v1 build plan.
 
-**Architecture:** Three independent throwaway spikes (A: `MFCreateVirtualCamera` + custom media source, B: DXGI cross-device sharing + explicit fence synchronization + camera handoff, C: ONNX/DirectML face-model benchmark) plus a shared Task 0 build-environment gate. Each spike produces a **verdict + measured numbers**, NOT reusable code — probe code is discarded after the verdict. Spike outcomes feed a second writing-plans pass that produces the detailed v1 build plan.
+**Architecture:** Three independent spikes (A: `MFCreateVirtualCamera` + custom media source, B: DXGI cross-device sharing + explicit fence synchronization + camera handoff, C: ONNX/DirectML face-model benchmark) plus a shared Task 0 build-environment gate. Each produces a **verdict + measured numbers** and remains executable evidence on the long-lived `spikes` branch, not reusable product code. Spike outcomes feed a second writing-plans pass that produces the detailed v1 build plan.
 
 **Tech Stack:** C++17, CMake, Windows 11 build 22000+, Windows SDK, Media Foundation virtual-camera API, bgfx (D3D12 backend), ONNX Runtime + DirectML EP, Intel Iris Xe iGPU reference machine.
 
@@ -13,13 +13,13 @@
 ## Global Constraints
 
 - **Execution environment:** Windows 11 build 22000+ with Visual Studio 2022 or newer, Windows SDK 10.0.22000.0+, CMake, and an **iGPU reference machine (Intel Iris Xe)**. This plan CANNOT run on Windows 10 or macOS. All `Run:` commands are Windows (PowerShell/cmd).
-- **License:** Apache-2.0 (core). Spikes are throwaway — probe code is NOT merged into the product; it lives in a temp/scratch location or an isolated branch and is deleted after the verdict.
+- **Evidence retention and reproducibility:** Probe/product code NEVER merges into `main`; retain executable evidence on long-lived `spikes` and never remove it after a verdict. Every direct `spikes/<id>/` directory except `spikes/template/` requires `README.md`, strict-JSON `spike.json`, and `CMakeLists.txt`; the manifest requires `schema_version`, `id`, `title`, `status`, `upstream`, `hardware`, `dependencies`, `artifacts`, non-empty `commands.build`/`run`/`cleanup`, `gates`, and `verdict`. Completed or closed spikes also retain `results/summary.json`. Keep large models/binaries out of Git, but retain fixed acquisition URLs, versions, hashes, licenses, and acquisition commands in metadata. Preserve upstream attribution, exact reproduction commands, and measured results. Do not represent unavailable historical probe code as retained evidence.
 - **Language:** C++17; build with CMake + `CMakePresets.json`.
 - **Render backend:** bgfx pinned to its **D3D12** backend on Windows (to align with DirectML, which is D3D12-based). See spec §2.1.
 - **Perf target:** iGPU 30fps = **≤33.3ms/frame** budget (30fps frame time = 33.33ms). Spike B/C measure components of this budget. See spec §2.2.
 - **Dependencies (mixed acquisition, spec §4.1):** bgfx via vcpkg port or FetchContent; ONNX Runtime + DirectML via official prebuilt redist (`Microsoft.ML.OnnxRuntime.DirectML` NuGet unpacked, or the C/C++ redist zip from onnxruntime releases); small libs (gtest) via FetchContent.
 - **Output format/resolution:** target 1080p, NV12 primary / BGRA8 fallback. Spike A confirms what the Frame Server virtual-camera path and target consumers accept; Spike B confirms which formats can stay GPU-resident across D3D11↔D3D12 boundaries.
-- **Commits:** per git_rules, implementer commits on a `feat/*` branch if agreed upfront at execution start; **push needs separate explicit user consent**. Spike verdicts/findings are recorded in this plan's "Verdict Log" section (added by the executor) regardless of whether probe code is kept.
+- **Evidence and verdict PRs:** Open executable probe code, measurements, manifests, and reproducibility assets in an evidence PR targeting `spikes`. Open a separate verdict-only documentation PR targeting `main`; it records the canonical verdict but MUST NOT add probe/product code. Parallel code work requires separate worktrees and exclusive file ownership, with no more than five agents; one integration owner serializes all hardware/GPU/virtual-camera/Frame Server/OBS/meeting-app measurement and final evidence capture.
 - **Decision baseline:** v1 targets Windows 11 build 22000+ and uses the user-mode `MFCreateVirtualCamera` API. A kernel AVStream fallback is out of scope; a Spike A NO-GO stops the plan and triggers a product/OS-support decision instead of silently adding a driver.
 
 ---
@@ -27,7 +27,7 @@
 ### Task 0: Windows 11 Build Environment + iGPU Reference Gate
 
 **Files:**
-- Create: `CMakeLists.txt` and `CMakePresets.json` (throwaway Phase-0 root)
+- Create: `CMakeLists.txt` and `CMakePresets.json` on the `spikes` evidence branch
 - Create: `vcpkg.json` (full Git baseline + explicit bgfx version override)
 - Create: `scripts/bootstrap-vcpkg.ps1` (bootstraps the same vcpkg tool commit on every developer/CI machine)
 - Create: `scripts/build-phase0-env.ps1` (single configure/build/run entry point)
@@ -56,7 +56,7 @@ Require Windows build ≥22000 and record the Intel Iris Xe adapter name. If the
 
 - [x] **Step 4: Write the trivial gate program**
 
-`spikes/env/main.cpp` (throwaway): create a D3D12 device on the Intel adapter; initialize bgfx with that external D3D12 context and a hidden Win32 surface, transfer device ownership to bgfx, and run one `bgfx::frame`; create an ONNX Runtime session with CPU fallback disabled and execute a pinned Mul model through DirectML; call `MFStartup`; compile/link against `mfplat.lib` and `mfsensorgroup.lib`; verify `MFCreateVirtualCamera` is exported by `mfsensorgroup.dll`. Print toolchain versions, OS build, adapter identity, provider/result, and a pass line. Actual camera registration belongs to Spike A.
+`spikes/env/main.cpp`: create a D3D12 device on the Intel adapter; initialize bgfx with that external D3D12 context and a hidden Win32 surface, transfer device ownership to bgfx, and run one `bgfx::frame`; create an ONNX Runtime session with CPU fallback disabled and execute a pinned Mul model through DirectML; call `MFStartup`; compile/link against `mfplat.lib` and `mfsensorgroup.lib`; verify `MFCreateVirtualCamera` is exported by `mfsensorgroup.dll`. Print toolchain versions, OS build, adapter identity, provider/result, and a pass line. Actual camera registration belongs to Spike A.
 
 - [x] **Step 5: Build + run**
 
@@ -68,17 +68,13 @@ Expected: pinned vcpkg bootstrap, successful dependency restore/configure/build,
 
 Observed PASS on the Iris Xe reference workstation after disabling Windows Smart App Control, which does not support per-application exceptions. The gate selected bgfx Direct3D 12, loaded `MFCreateVirtualCamera`, executed the pinned ONNX Mul model through `DmlExecutionProvider` with CPU fallback disabled, returned finite output `2`, and printed `ENV_GATE_PASS`.
 
-- [x] **Step 6: Record env gate + commit**
+- [x] **Step 6: Record env gate and preserve evidence**
 
-Append `env gate PASS — os_build=<n>, adapter=<name>, MFCreateVirtualCamera=available, bgfx=D3D12, DirectML=<version/result>, cmake=<version>, msvc=<version>, windows_sdk=<version>, vcpkg_baseline=<commit>` to the Verdict Log. Commit the env scaffolding on the `feat/*` branch:
-```bash
-git add .gitignore CMakeLists.txt CMakePresets.json vcpkg.json scripts/bootstrap-vcpkg.ps1 scripts/build-phase0-env.ps1 spikes/env docs/plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(env): gate Windows 11 virtual camera and GPU stack"
-```
+Append `env gate PASS — os_build=<n>, adapter=<name>, MFCreateVirtualCamera=available, bgfx=D3D12, DirectML=<version/result>, cmake=<version>, msvc=<version>, windows_sdk=<version>, vcpkg_baseline=<commit>` to the Verdict Log. Submit the environment scaffolding, manifest, reproduction instructions, and measured result in an evidence PR to `spikes`. Submit the matching verdict-log update separately in a verdict-only PR to `main`.
 
 ---
 
-### Task 1: Spike A — Windows 11 User-Mode Virtual Camera Feasibility (throwaway)
+### Task 1: Spike A — Windows 11 User-Mode Virtual Camera Feasibility
 
 **Files:**
 - Create: `spikes/virtualcam/media-source/` (minimal custom Media Foundation media-source DLL)
@@ -120,22 +116,18 @@ Exercise Start/Stop/Shutdown/Remove, application restart, and one reboot with th
 
 Open the camera concurrently in OBS and one meeting app. Confirm both receive valid frames or record the precise Frame Server limitation. Multi-consumer failure is GO-WITH-CAVEAT only if v1 explicitly narrows its contract; otherwise it is NO-GO.
 
-- [x] **Step 8: Record Verdict A + throw away**
+- [x] **Step 8: Record Verdict A and preserve evidence**
 
 Append: `Spike A: <GO|GO-WITH-CAVEAT|NO-GO> — apps=<list>, 1080p30=<yes/no>, formats=<list>, feeder_to_sample_ms=<x>, cpu=<x%>, idle_black=<yes/no>, restart=<yes/no>, reboot_persistence=<yes/no>, clean_remove=<yes/no>, admin_required=<yes/no>, two_consumers=<yes/no>`.
 
-Delete `spikes/virtualcam/` probe code (or leave it on an isolated branch, NOT merged). Commit the verdict-log update only:
-```bash
-git add docs/plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(A): Windows user-mode virtual camera verdict"
-```
+Submit the executable probe, strict manifest, reproduction instructions, attribution, and measured result in an evidence PR to `spikes`; do not remove it after the verdict. Submit only the verdict-log documentation in a separate PR to `main`. If historical probe code is unavailable, preserve the measured verdict without claiming executable evidence exists.
 
 ---
 
-### Task 2: Spike B — D3D11↔D3D12 Sharing, Fence Synchronization, and Camera Handoff (throwaway)
+### Task 2: Spike B — D3D11↔D3D12 Sharing, Fence Synchronization, and Camera Handoff
 
 **Files:**
-- Create: `spikes/sharing/main.cpp` (throwaway probe)
+- Create: `spikes/sharing/main.cpp` (evidence probe)
 - Create: `spikes/sharing/CMakeLists.txt`
 
 **Hypothesis:** On the Iris Xe iGPU, frames can remain GPU-resident through MF-capture-D3D11 → DirectML-D3D12 → bgfx-D3D12 using NT shared handles, explicit shared fences, and a documented resource-state contract. The Windows 11 custom media source can then consume a GPU-backed `IMFSample`; if Frame Server rejects that path, one measured GPU→CPU readback plus the Spike A shared-memory handoff still fits the 30fps budget. (Spec §2.1, §6.1 #2, §6.3 spike 2.)
@@ -172,15 +164,11 @@ If the GPU-backed sample path is unsupported or unstable, read the final 1080p f
 
 After warm-up, run at least 1,000 frames and then a 10-minute 1080p30 soak. Record per-hop fence wait/signal cost, DirectML binding/inference floor, bgfx pass, virtual-camera handoff, p50/p95/p99 frame cost, dropped frames, and total against the 33.3ms envelope.
 
-- [x] **Step 8: Record Verdict B + throw away**
+- [x] **Step 8: Record Verdict B and preserve evidence**
 
 Append: `Spike B: <verdict> — copy_free_gpu=<yes/no>, formats=<list>, fence_protocol=<ok/fail>, sync_p95_ms=<x>, dml_binding=<direct/copy>, bgfx_native=<yes/no>, camera_gpu_sample=<yes/no>, fallback_readback_ipc_ms=<x|n/a>, same_adapter=<yes/no>, total_p95_ms=<x>, fits_30fps=<yes/no>`.
 
-Delete `spikes/sharing/`. Commit the verdict-log update:
-```bash
-git add docs/plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(B): GPU sharing and virtual-camera handoff verdict"
-```
+Submit the executable probe, strict manifest, reproduction instructions, attribution, and measured result in an evidence PR to `spikes`; do not remove it after the verdict. Submit only the verdict-log documentation in a separate PR to `main`. If historical probe code is unavailable, preserve the measured verdict without claiming executable evidence exists.
 
 ### Task 2.1: Spike B2 — End-to-End CPU Fallback Transport (reproducible evidence branch)
 
@@ -294,12 +282,12 @@ Retain the reproducible probe only on branch `spikes`. Record the measured verdi
 ---
 
 
-### Task 3: Spike C — Face Model iGPU DirectML Perf + Selection (throwaway)
+### Task 3: Spike C — Face Model iGPU DirectML Perf + Selection
 
 **Files:**
-- Create: `spikes/face/main.cpp` (throwaway probe)
+- Create: `spikes/face/main.cpp` (evidence probe)
 - Create: `spikes/face/CMakeLists.txt`
-- Create: `spikes/face/models/` (candidate ONNX models, git-ignored if large)
+- Create: `spikes/face/models/` (candidate ONNX models; large binaries stay out of Git with acquisition metadata in the manifest)
 
 **Hypothesis:** At least one lightweight face-landmark ONNX model runs on the Iris Xe iGPU via ONNX Runtime DirectML within ~5-8ms/frame at 1080p, with enough landmarks (≥68, ideally ~106-468) to drive natural face-reshape. (Spec §6.1 #5, §9 "face model final selection", §6.3 spike 3.)
 
@@ -331,13 +319,9 @@ Run the top candidate(s) on a few real-face stills; overlay landmarks; confirm t
 
 Pick the **lightest model that meets the latency budget AND has sensible landmark placement**. Designate a **fallback** (even lighter, if the primary busts the budget on weaker iGPUs). Record both with rationale.
 
-- [ ] **Step 6: Record Verdict C + throw away**
+- [ ] **Step 6: Record Verdict C and preserve evidence**
 
-Append to Verdict Log: `Spike C: GO — selected=<model name, N landmarks, license>, per_frame_ms_iGPU=<x>, quality=<0-3>, fallback=<model>`. If no candidate fits ~5-8ms with sensible landmarks, record NO-GO and flag (would force a heavier face-pipeline rethink). Delete `spikes/face/` probe code. Commit verdict-log update:
-```bash
-git add docs/plans/2026-08-15-phase0-spikes.md
-git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
-```
+Append to Verdict Log: `Spike C: GO — selected=<model name, N landmarks, license>, per_frame_ms_iGPU=<x>, quality=<0-3>, fallback=<model>`. If no candidate fits ~5-8ms with sensible landmarks, record NO-GO and flag (would force a heavier face-pipeline rethink). Submit the executable probe, strict manifest, reproduction instructions, model acquisition metadata, and measured result in an evidence PR to `spikes`; do not remove it after the verdict. Submit only the verdict-log documentation in a separate PR to `main`.
 
 ---
 

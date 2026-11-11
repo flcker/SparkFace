@@ -108,14 +108,26 @@ Budget must be **measured** on the iGPU reference machine, not estimated.
 
 ## Workflow Notes
 
-- Phase-0 spikes are **throwaway feasibility probes** — probe code is not
-  merged into the product. Spike verdicts (with measured numbers) gate the v1
-  build plan.
+- Phase-0 probes are executable evidence, never product source. Follow the retention and parallel-development rules below; measured verdicts gate the v1 build plan.
 - Code quality: clang-format / clang-tidy / cmake-format + pre-commit hook.
 - Branches & tags: feature work on `feat/*`; never commit directly to `main` /
   `dev`. SemVer tags (`vX.Y.Z[-rc.N]`) per `git_rules`.
 - iGPU 30fps performance gate cannot run in public CI (no iGPU runner) — use a
   self-hosted iGPU runner or manual regression before merge.
+
+## Spike Evidence Retention
+
+- Retain executable Phase-0 evidence on the long-lived `spikes` branch. Probe/product code NEVER merges into `main`; once a verdict is recorded, do not delete its evidence.
+- Open an evidence PR to `spikes` for probe code, measurements, and reproducibility assets. Open a separate verdict-only documentation PR to `main`; it MUST NOT add probe/product code.
+- Each direct `spikes/<id>/` directory except `spikes/template/` requires `README.md`, strict-JSON `spike.json`, and `CMakeLists.txt`. The manifest requires `schema_version`, `id`, `title`, `status`, `upstream`, `hardware`, `dependencies`, `artifacts`, non-empty `commands.build`/`run`/`cleanup`, `gates`, and `verdict`; completed or closed spikes also retain `results/summary.json`.
+- Evidence validation MUST reject build artifacts or known build directories, files over 10 MiB under `spikes/`, and—when a base ref is supplied—the deletion of an existing direct spike directory.
+- Keep large models and binaries out of Git. Their manifest metadata MUST retain fixed acquisition URLs, versions, hashes, licenses, and acquisition commands. Preserve upstream attribution and the exact reproduction commands alongside measured results.
+- Do not represent an unavailable historical probe as retained evidence; preserve its measured verdict and state the evidence availability accurately.
+
+## Parallel Spike Development
+
+- Parallel spike development is permitted only in separate worktrees with exclusive file ownership. Limit concurrent agents to five.
+- One integration owner serializes all hardware/GPU/virtual-camera/Frame Server/OBS/meeting-app measurement and final evidence capture. Parallel agents MUST NOT perform those measurements.
 
 ## End-to-End Workflow Authorization
 
