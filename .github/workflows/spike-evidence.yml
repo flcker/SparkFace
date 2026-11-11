@@ -1,0 +1,31 @@
+name: Spike evidence
+
+on:
+  pull_request:
+    branches: [spikes]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch pull-request base
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch origin "$env:BASE_REF`:refs/remotes/origin/$env:BASE_REF" --depth=1
+      - name: Validate evidence
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if ($env:EVENT_NAME -eq 'pull_request') {
+            ./scripts/check-spike-evidence.ps1 -BaseRef "origin/$env:BASE_REF"
+          } else {
+            ./scripts/check-spike-evidence.ps1
+          }

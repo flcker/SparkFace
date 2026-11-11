@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "fallback",
+  "title": "CPU fallback transport evidence",
+  "status": "completed",
+  "upstream": {
+    "windows_camera": "microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df",
+    "bgfx": "vcpkg 1.129.8940-496#1"
+  },
+  "hardware": "Intel Iris Xe reference workstation; driver 32.0.101.7092",
+  "dependencies": ["Windows 11", "MSVC x64 Developer PowerShell", "bgfx", "Microsoft Windows-Camera"],
+  "artifacts": [
+    {
+      "name": "Microsoft Windows-Camera source archive",
+      "url": "https://codeload.github.com/microsoft/Windows-Camera/tar.gz/626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "version": "626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "sha256": "d4c4217684d76e6e5934114a4d9ade0d0e6249fef70462d5cc451e3613674eec",
+      "license": "MIT",
+      "acquire": "spikes/fallback/media-source/build-upstream.ps1"
+    }
+  ],
+  "commands": {
+    "build": ["cmake -S . -B build/windows-x64-release -G Ninja -DCMAKE_BUILD_TYPE=Release", "spikes/fallback/media-source/build-upstream.ps1"],
+    "run": ["build/windows-x64-release/spikes/fallback/fallback_producer.exe --frames 1500", "build/windows-x64-release/spikes/fallback/fallback_mf_consumer.exe --frames 1000 --pacing-mode async"],
+    "cleanup": ["build/windows-x64-release/spikes/fallback/fallback_registrar.exe remove", "Remove-Item C:\\Users\\Public\\SparkFacePhase0B2Mode.txt -ErrorAction SilentlyContinue"]
+  },
+  "gates": {
+    "output": "NV12 1920x1080 at 30fps",
+    "minimum_fps": 29.5,
+    "maximum_frame_age_p95_ms": 33.3
+  },
+  "verdict": {
+    "outcome": "NO-GO",
+    "scope": "synthetic CPU fallback transport; product 30fps not proven"
+  }
+}

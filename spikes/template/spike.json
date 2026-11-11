@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "example",
+  "title": "Example spike",
+  "status": "planned",
+  "upstream": "not-recorded",
+  "hardware": "not-recorded",
+  "dependencies": ["not-recorded"],
+  "artifacts": [
+    {
+      "name": "external-artifact-name",
+      "url": "not-recorded",
+      "version": "not-recorded",
+      "sha256": "not-recorded",
+      "license": "not-recorded",
+      "acquire": "not-recorded"
+    }
+  ],
+  "commands": {
+    "build": ["not-recorded"],
+    "run": ["not-recorded"],
+    "cleanup": ["not-recorded"]
+  },
+  "gates": "not-recorded",
+  "verdict": "not-recorded"
+}
