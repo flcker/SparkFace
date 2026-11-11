@@ -263,6 +263,36 @@ Remove the mode file after the experiment and remove the virtual camera with the
 Do not append this entry until measurements exist. Keep the evidence probe on its dedicated branch; no B3 code or result is product source.
 
 ---
+### Task 2.3: Spike B4 — Asynchronous Media-Source Pacing
+
+**Files:**
+- Modify and retain on branch `spikes`: `spikes/fallback/media-source/windows-camera-b2.patch`, `spikes/fallback/consumer/mf_main.cpp`, and `spikes/fallback/README.md`.
+- Modify this plan only with the measured B4 verdict; no probe code enters `main`.
+
+**Hypothesis:** Moving producer waits out of `RequestSample` and onto a private serial Media Foundation work queue can remove synchronous request pacing from the Frame Server path and deliver 1,000 valid 1920×1080 frames at ≥29.5fps with producer-to-client frame-age p95 ≤33.3ms.
+
+**Interfaces:**
+- Consumes: the retained B2 ring and B3 payload diagnostics, plus the accepted single-consumer virtual-camera contract.
+- Produces: **Verdict B4** — non-blocking request behavior, complete source timing, achieved client fps, producer-to-client frame age, sequence validity, and a conditional recovery/application/soak result.
+
+- [x] **Step 1: Make `RequestSample` non-blocking**
+
+Queue each request in a fixed 16-entry buffer and return immediately. Use a private serial work queue to wait on the producer frame-ready event and a 33ms deadline timer. Deliver the oldest request when a complete fresh sequence is available; deliver black on the deadline when input is absent or stale. Cancel waits and flush requests on pause, stop, and shutdown.
+
+- [x] **Step 2: Measure the complete Source Reader loop**
+
+Preserve the B3 payload fields and add a consumer-side count of valid B4 diagnostics. Measure elapsed time and achieved fps around the complete Source Reader loop. Release the Source Reader and source references before `IMFActivate::ShutdownObject`; releasing the Source Reader already shuts down its media source.
+
+- [x] **Step 3: Run the 1,000-frame gate**
+
+Require 1,000 valid frames, 1,000 B4 diagnostic frames, zero marker and duplicate errors, ≥29.5fps, and producer-to-client frame-age p95 ≤33.3ms. Run recovery, OBS, Tencent Meeting, and the 10-minute soak only after the automated gate passes.
+
+- [x] **Step 4: Record Verdict B4**
+
+Retain the reproducible probe only on branch `spikes`. Record the measured verdict in the log below and preserve the existing B/B2 NO-GO when either the fps or frame-age gate fails.
+
+---
+
 
 ### Task 3: Spike C — Face Model iGPU DirectML Perf + Selection (throwaway)
 
@@ -322,13 +352,16 @@ git commit -m "spike(C): face model iGPU DirectML perf + selection verdict"
 - Spike B: **NO-GO** — `copy_free_gpu=no`; `formats=D3D12→D3D11 {BGRA8,RGBA8,R8} only` (`NV12` failed and D3D11→D3D12 failed for all four tested formats); `fence_protocol=ok`; `sync_p95_ms=3.107`; `dml_binding=copy` (direct resource I/O binding exited with `0xC0000005`); `bgfx_native=no` (native imported-resource path exited with `0xC0000005`; bgfx-owned compute did run); `camera_gpu_sample=no` (D3D11 NV12 wrapped as an `IMFSample`, but Frame Server preservation was not proven; D3D12 NV12 returned `E_NOINTERFACE`); `fallback_readback_ipc_ms=4.502 p95` over 1,000 frames (`6.416ms` p95 in the 10-minute soak); `same_adapter=yes`; `total_p95_ms=n/a`; `fits_30fps=no`. On Iris Xe driver `32.0.101.7092`, 1,000 known-pattern round trips passed per-frame validation and the 18,000-frame fallback soak recorded four missed 33.3ms deadlines. The measured partial-copy component sum was `8.855ms` p95, but excludes capture/readback-to-DirectML, full-frame upload into bgfx, and Frame Server delivery, so it is not an end-to-end total. The planned GPU-resident chain is unsupported; Spike C and the v1 build plan remain gated.
 - Spike B2: **NO-GO** — `correctness=pass`; `d3d11_readback_p95_ms=6.375`; `bgfx_roundtrip_p95_ms=10.932`; `ring_publish_p95_ms=0.359`; producer-side `transport_total_p95_ms=22.014`; real camera `source_enqueue_p95_ms=16.439`, `frame_server_delivery_p95_ms=48.826`, and producer-to-client `p95_ms=78.099`; 1,000 valid MF frames had `0` skipped, `23` duplicate, and `0` marker/content errors; idle black began in `46.442ms`; producer recovery without reopening=`yes`; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 rendered the full moving 1920×1080 pattern separately; clean remove=`yes`; `product_30fps_proven=no`. The fallback proves synthetic 1080p30 throughput and application compatibility but exceeds the 33.3ms product budget before face ML and production beauty shaders. Full evidence: [Spike B/B2 — GPU handoff and CPU fallback](2026-11-10-phase0-spike-b2-fallback.md).
 - Spike B3: **NO-GO** — `wait_producer_to_client_p95_ms=79.820`, `immediate_producer_to_client_p95_ms=57.635`, `winner=immediate`, `wait_validity=pass`, `immediate_validity=pass`, `winner_recovery=yes`, `winner_apps=OBS moving pattern rendered / Tencent Meeting moving pattern rendered`, `winner_soak=not-run p95 gate`, `source_enqueue_boundary=unavailable`, `product_30fps_proven=no`.
+- Spike B4: **NO-GO** — `async_request_queue=yes`; `mf_frames=1000`; `mf_b4_diagnostic_frames=1000`; `mf_fps_achieved=26.644`; `producer_to_client_frame_age_p95_ms=48.758`; `source_wait_p95_ms=63.205`; `producer_fps=29.992`; producer `transport_total_p95_ms=22.920`; `skipped_sequences=125`; `duplicate_sequences=0`; `marker_errors=0`; recovery/apps/soak=`not-run automated gate failed`; `product_30fps_proven=no`. Asynchronous `RequestSample` removed the synchronous wait but did not meet either the 29.5fps or 33.3ms gate.
 - [Spike C — face model verdict]
 
 ## Gate to v1 Build Plan
 
-After Spikes A/B/C all return **GO** (or GO-WITH-CAVEAT with explicitly accepted product constraints): invoke `superpowers:writing-plans` again to write the **detailed v1 build plan** (`docs/plans/<date>-v1-build.md`), now informed by:
-- the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
-- the shareable format set, fence/resource-state protocol, DirectML/bgfx interop, and GPU-or-CPU camera handoff costs measured in Spike B,
-- the selected face model + measured latency from Spike C.
+The detailed v1 build plan is **blocked**. Spike A/A2 established an accepted single-consumer virtual-camera contract, but Spikes B, B2, B3, and B4 all returned **NO-GO** for the selected 1080p30 iGPU handoff architecture. Spike C may be measured independently, but it cannot unblock v1 planning.
 
-That second plan implements the modules in the [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) §3, TDD task-by-task.
+Before writing `docs/plans/<date>-v1-build.md`, make an explicit product/architecture decision that changes the failed constraint—such as the performance promise, default resolution, or transport architecture—and validate the replacement handoff with a GO or explicitly accepted GO-WITH-CAVEAT. The eventual build plan must be informed by:
+- the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
+- the measured GPU and CPU handoff limits from Spikes B through B4,
+- the selected face model and measured latency from Spike C.
+
+Only after those gates are accepted should a second planning pass implement the modules in the [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) §3.
