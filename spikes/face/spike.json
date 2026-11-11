@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "id": "face",
+  "title": "Spike C DirectML face-landmark model selection",
+  "status": "closed",
+  "upstream": "yakhyo/mediapipe-face-mesh-onnx@3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+  "hardware": "Intel Iris Xe driver 32.0.101.7092; DirectML device 0",
+  "dependencies": [
+    "Windows 11 build 22000+",
+    "MSVC x64 Release",
+    "Microsoft.ML.OnnxRuntime.DirectML 1.24.4"
+  ],
+  "artifacts": [
+    {
+      "name": "MediaPipe Face Landmarker 478-point ONNX",
+      "url": "https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_landmarker_Nx3x256x256.onnx",
+      "version": "release asset 494186501 at commit 3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+      "sha256": "111795f8703cdeb6d0c68a9f3cc966a0f23f8786bb00f4577a11f461fc4276ac",
+      "license": "Apache-2.0",
+      "acquire": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\spikes\\face\\fetch-models.ps1"
+    },
+    {
+      "name": "MediaPipe Face Mesh 468-point ONNX",
+      "url": "https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_mesh_Nx3x192x192.onnx",
+      "version": "release asset 492768497 at commit 3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+      "sha256": "3ca77cf59c18e4da0eccb46695bf604683fa564253e3385892981a5c274fb10f",
+      "license": "Apache-2.0",
+      "acquire": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\spikes\\face\\fetch-models.ps1"
+    },
+    {
+      "name": "The Metropolitan Museum of Art elderly-man full-face still",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/8/82/-Elderly_Man%3B_Full_Face-_MET_37.14.52.jpg",
+      "version": "Wikimedia Commons revision 824076779",
+      "sha256": "a849023ad4b6c7aec7ecd0a7d0c5c9df313e46b95f4c7be5ec021397e958fccc",
+      "license": "CC0-1.0",
+      "acquire": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\spikes\\face\\fetch-models.ps1"
+    }
+  ],
+  "commands": {
+    "build": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\build-phase0-face.ps1"
+    ],
+    "run": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run-phase0-face.ps1"
+    ],
+    "cleanup": [
+      "Remove-Item -Recurse -Force .\\build\\face-models,.\\build\\face-results,.\\build\\windows-x64-release-face"
+    ]
+  },
+  "gates": "DirectML device 0 with CPU EP fallback disabled; 10 warmups; at least 100 measured inferences; finite outputs; p95 <= 8.0 ms on Iris Xe; real-face overlay alignment passes for eyes, nose, mouth, and contour",
+  "verdict": "NO-GO: 478-point primary p95 15.5720 ms and 468-point fallback p95 9.8847 ms both exceeded the 8.0 ms gate; both real-face overlays passed quality review; no model selected"
+}
