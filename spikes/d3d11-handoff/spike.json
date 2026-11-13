@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "d3d11-handoff",
+  "title": "Cross-process D3D11 shared-texture virtual-camera handoff",
+  "status": "completed",
+  "upstream": {
+    "windows_camera": "microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df"
+  },
+  "hardware": "Windows 11 Pro build 26300; 13th Gen Intel Core i7-13700H; Intel Iris Xe Graphics; driver 32.0.101.7092",
+  "dependencies": [
+    "Windows 11",
+    "MSVC 19.51.36256 x64",
+    "MSBuild 18.9.1",
+    "Windows SDK 10.0.26100",
+    "NuGet 7.9.0.83",
+    "Microsoft Windows-Camera"
+  ],
+  "artifacts": [
+    {
+      "name": "Microsoft Windows-Camera source archive",
+      "url": "https://codeload.github.com/microsoft/Windows-Camera/tar.gz/626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "version": "626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "sha256": "d4c4217684d76e6e5934114a4d9ade0d0e6249fef70462d5cc451e3613674eec",
+      "license": "MIT",
+      "acquire": "spikes/d3d11-handoff/media-source/build-upstream.ps1"
+    },
+    {
+      "name": "NuGet command line",
+      "url": "https://dist.nuget.org/win-x86-commandline/v7.9.0/nuget.exe",
+      "version": "7.9.0.83",
+      "sha256": "992d70cac5b06c38efec91806caba64cdcc07e6d963a0959dbbbaf264d33b800",
+      "license": "Apache-2.0",
+      "acquire": "scripts/build-phase0-d.ps1"
+    }
+  ],
+  "commands": {
+    "build": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-phase0-d.ps1"
+    ],
+    "run": [
+      "Run elevated: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-phase0-d.ps1"
+    ],
+    "cleanup": [
+      "build/windows-x64-release-d/spikes/d3d11-handoff/d3d11_handoff_registrar.exe remove",
+      "Remove-Item -Force C:\\Users\\Public\\SparkFacePhase0DControl.bin,C:\\Users\\Public\\SparkFaceDTrace.log",
+      "Remove-Item -Recurse -Force build/windows-x64-release-d,build/phase0-d-upstream,build/phase0-d-results"
+    ]
+  },
+  "gates": {
+    "adapter": "hardware Intel Iris Xe; software adapters rejected",
+    "output": "exactly 1000 NV12 1920x1080 frames with strictly increasing sequence markers and zero payload marker errors",
+    "minimum_fps": 29.5,
+    "maximum_frame_age_p95_ms": 33.3,
+    "recovery": "producer kill/restart and 30-second stall recover without reinstall or client hang",
+    "applications": "OBS and Tencent Meeting separately receive valid 1080p30 output and each pass a 10-minute soak"
+  },
+  "verdict": {
+    "outcome": "NO-GO",
+    "scope": "The interactive Iris Xe producer and out-of-process Frame Server source allocator exposed different adapter LUIDs, so the required same-adapter D3D11 NT shared-texture handoff failed before any frame delivery. Conditional recovery, application, and soak checks were not run."
+  }
+}
