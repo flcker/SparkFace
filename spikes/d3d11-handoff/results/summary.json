@@ -1,0 +1,32 @@
+{
+  "outcome": "NO-GO",
+  "environment": {
+    "os": "Windows 11 Pro build 26300",
+    "gpu": "Intel(R) Iris(R) Xe Graphics",
+    "driver": "32.0.101.7092",
+    "format": "NV12 1920x1080 at 30 fps",
+    "media_source": "microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df"
+  },
+  "automated_gate": {
+    "requested_frames": 1000,
+    "delivered_frames": 0,
+    "same_adapter": "fail",
+    "producer_adapter_luid": "00000000:0000ffd8",
+    "frame_server_source_adapter_luid": "00000000:000178d8",
+    "failure": "The out-of-process Frame Server media source created its allocator-backed D3D11 sample on a different adapter LUID from the interactive Iris Xe producer. D3D11 NT shared textures cannot be opened across that adapter boundary.",
+    "fps": "n/a",
+    "producer_to_client_frame_age_p95_ms": "n/a",
+    "payload_validation": "not-run; no frame crossed the same-adapter prerequisite"
+  },
+  "conditional_checks": {
+    "producer_restart": "not-run; automated gate failed",
+    "thirty_second_stall": "not-run; automated gate failed",
+    "applications": "not-run; automated gate failed",
+    "soak": "not-run; automated gate failed"
+  },
+  "cleanup": {
+    "previous_media_source_registration_restored": true,
+    "probe_processes_remaining": false
+  },
+  "source": "spikes/d3d11-handoff/README.md"
+}

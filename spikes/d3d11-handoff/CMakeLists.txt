@@ -1,0 +1,16 @@
+add_executable(d3d11_handoff_producer producer/main.cpp)
+target_include_directories(d3d11_handoff_producer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(d3d11_handoff_producer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(d3d11_handoff_producer PRIVATE /W4 /WX /permissive- /EHsc)
+target_link_libraries(d3d11_handoff_producer PRIVATE d3d11 d3dcompiler dxgi)
+
+add_executable(d3d11_handoff_consumer consumer/main.cpp)
+target_include_directories(d3d11_handoff_consumer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(d3d11_handoff_consumer PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(d3d11_handoff_consumer PRIVATE /W4 /WX /permissive- /EHsc)
+target_link_libraries(d3d11_handoff_consumer PRIVATE mf mfplat mfreadwrite mfuuid ole32)
+
+add_executable(d3d11_handoff_registrar registrar/main.cpp)
+target_compile_definitions(d3d11_handoff_registrar PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(d3d11_handoff_registrar PRIVATE /W4 /WX /permissive- /EHsc)
+target_link_libraries(d3d11_handoff_registrar PRIVATE advapi32 mf mfplat mfsensorgroup mfuuid ole32)

@@ -1,0 +1,542 @@
+diff --git a/VirtualCameraMediaSource/D3D11FrameSource.h b/VirtualCameraMediaSource/D3D11FrameSource.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..7762bd85b122328cf36402c7204bb649f89ec823
+--- /dev/null
++++ b/VirtualCameraMediaSource/D3D11FrameSource.h
+@@ -0,0 +1,338 @@
++// SPDX-License-Identifier: Apache-2.0
++// SparkFace Phase-0 D adapter for the Microsoft Windows-Camera sample.
++#pragma once
++
++#include <Windows.h>
++#include <d3d11_1.h>
++#include <dxgi1_2.h>
++#include <mfapi.h>
++#include <mfobjects.h>
++#include <wrl/client.h>
++
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <string>
++
++namespace SparkFaceD3D11
++{
++    constexpr std::uint32_t Width = 1920;
++    constexpr std::uint32_t Height = 1080;
++    constexpr std::uint32_t SlotCount = 3;
++    constexpr std::uint32_t Magic = 0x44474653U;
++    constexpr std::uint32_t Version = 1;
++    constexpr wchar_t ControlPath[] = L"C:\\Users\\Public\\SparkFacePhase0DControl.bin";
++    constexpr wchar_t FrameReadyEventName[] = L"Local\\SparkFacePhase0DFrameReady";
++    constexpr wchar_t TextureNamePrefix[] = L"Global\\SparkFacePhase0DTexture";
++    inline void Trace(const char* message)
++    {
++        HANDLE file = CreateFileW(L"C:\\Users\\Public\\SparkFaceDTrace.log",
++            FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
++            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
++        if (file == INVALID_HANDLE_VALUE)
++        {
++            return;
++        }
++        DWORD written = 0;
++        const DWORD length = static_cast<DWORD>(std::strlen(message));
++        WriteFile(file, message, length, &written, nullptr);
++        WriteFile(file, "\r\n", 2, &written, nullptr);
++        CloseHandle(file);
++    }
++    inline void TraceError(const char* operation, DWORD error)
++    {
++        char message[96]{};
++        sprintf_s(message, "%s error=%lu", operation, static_cast<unsigned long>(error));
++        Trace(message);
++    }
++
++
++
++    struct alignas(64) SlotMetadata
++    {
++        volatile LONG64 sequence;
++        std::int64_t producerQpc;
++        std::int64_t publishedQpc;
++        std::byte reserved[40];
++    };
++
++    struct alignas(64) ControlBlock
++    {
++        std::uint32_t magic;
++        std::uint32_t version;
++        std::uint32_t width;
++        std::uint32_t height;
++        std::uint32_t slotCount;
++        std::uint32_t producerPid;
++        LUID adapterLuid;
++        std::int64_t qpcFrequency;
++        volatile LONG64 publishedSequence;
++        volatile LONG publishedSlot;
++        std::byte reserved[12];
++        SlotMetadata slots[SlotCount];
++    };
++
++    class FrameSource
++    {
++    public:
++        FrameSource() = default;
++        ~FrameSource()
++        {
++            ResetResources();
++            if (m_view != nullptr)
++            {
++                UnmapViewOfFile(m_view);
++            }
++            if (m_mapping != nullptr)
++            {
++                CloseHandle(m_mapping);
++            }
++            if (m_file != INVALID_HANDLE_VALUE)
++            {
++                CloseHandle(m_file);
++            }
++        }
++
++        FrameSource(const FrameSource&) = delete;
++        FrameSource& operator=(const FrameSource&) = delete;
++
++        HRESULT CopyLatestToSample(IMFSample* sample, bool* delivered)
++        {
++            if (sample == nullptr || delivered == nullptr)
++            {
++                return E_POINTER;
++            }
++            *delivered = false;
++            if (!EnsureControlOpen())
++            {
++                return S_OK;
++            }
++
++            auto* control = static_cast<ControlBlock*>(m_view);
++            const std::uint32_t producerPid = control->producerPid;
++            if (producerPid == 0)
++            {
++                return S_OK;
++            }
++            const LONG64 latest = InterlockedCompareExchange64(&control->publishedSequence, 0, 0);
++            const LONG slotValue = InterlockedCompareExchange(&control->publishedSlot, 0, 0);
++            if (latest <= 0 || latest == m_lastSequence || slotValue < 0 ||
++                slotValue >= static_cast<LONG>(SlotCount))
++            {
++                return S_OK;
++            }
++            const std::uint32_t slotIndex = static_cast<std::uint32_t>(slotValue);
++            SlotMetadata& metadata = control->slots[slotIndex];
++            if (InterlockedCompareExchange64(&metadata.sequence, 0, 0) != latest)
++            {
++                return S_OK;
++            }
++
++            Microsoft::WRL::ComPtr<IMFMediaBuffer> outputBuffer;
++            HRESULT result = sample->GetBufferByIndex(0, &outputBuffer);
++            if (FAILED(result))
++            {
++                TraceError("get-output-buffer", static_cast<DWORD>(result));
++                return result;
++            }
++            Microsoft::WRL::ComPtr<IMFDXGIBuffer> dxgiBuffer;
++            result = outputBuffer.As(&dxgiBuffer);
++            if (FAILED(result))
++            {
++                TraceError("get-dxgi-buffer", static_cast<DWORD>(result));
++                return result;
++            }
++            Microsoft::WRL::ComPtr<ID3D11Texture2D> outputTexture;
++            result = dxgiBuffer->GetResource(IID_PPV_ARGS(&outputTexture));
++            if (FAILED(result))
++            {
++                TraceError("get-output-texture", static_cast<DWORD>(result));
++                return result;
++            }
++            UINT outputSubresource = 0;
++            result = dxgiBuffer->GetSubresourceIndex(&outputSubresource);
++            if (FAILED(result))
++            {
++                TraceError("get-output-subresource", static_cast<DWORD>(result));
++                return result;
++            }
++            Microsoft::WRL::ComPtr<ID3D11Device> device;
++            outputTexture->GetDevice(&device);
++            result = EnsureResources(device.Get(), producerPid, control->adapterLuid);
++            if (FAILED(result))
++            {
++                TraceError("open-resources", static_cast<DWORD>(result));
++                return result;
++            }
++
++            D3D11_TEXTURE2D_DESC outputDesc{};
++            outputTexture->GetDesc(&outputDesc);
++            if (outputDesc.Width != Width || outputDesc.Height != Height ||
++                outputDesc.Format != DXGI_FORMAT_NV12)
++            {
++                return MF_E_INVALIDMEDIATYPE;
++            }
++
++            auto& shared = m_sharedTextures[slotIndex];
++            auto& mutex = m_mutexes[slotIndex];
++            const HRESULT acquireResult = mutex->AcquireSync(1, 1000);
++            if (acquireResult == WAIT_TIMEOUT || acquireResult == HRESULT_FROM_WIN32(WAIT_TIMEOUT))
++            {
++                return S_OK;
++            }
++            RETURN_IF_FAILED(acquireResult);
++            m_context->CopySubresourceRegion(
++                outputTexture.Get(), outputSubresource, 0, 0, 0, shared.Get(), 0, nullptr);
++            m_context->Flush();
++            const HRESULT releaseResult = mutex->ReleaseSync(0);
++            RETURN_IF_FAILED(releaseResult);
++
++            m_lastSequence = latest;
++            *delivered = true;
++            return S_OK;
++        }
++
++    private:
++        bool EnsureControlOpen()
++        {
++            if (m_view != nullptr)
++            {
++                return true;
++            }
++            m_file = CreateFileW(ControlPath, GENERIC_READ | GENERIC_WRITE,
++                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
++                FILE_ATTRIBUTE_NORMAL, nullptr);
++            if (m_file == INVALID_HANDLE_VALUE)
++            {
++                TraceError("open-control-file", GetLastError());
++                return false;
++            }
++            m_mapping = CreateFileMappingW(m_file, nullptr, PAGE_READWRITE, 0,
++                sizeof(ControlBlock), nullptr);
++            if (m_mapping == nullptr)
++            {
++                TraceError("create-control-mapping", GetLastError());
++                CloseHandle(m_file);
++                m_file = INVALID_HANDLE_VALUE;
++                return false;
++            }
++            m_view = MapViewOfFile(m_mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0,
++                sizeof(ControlBlock));
++            if (m_view == nullptr)
++            {
++                TraceError("map-control", GetLastError());
++                CloseHandle(m_mapping);
++                m_mapping = nullptr;
++                CloseHandle(m_file);
++                m_file = INVALID_HANDLE_VALUE;
++                return false;
++            }
++            const auto* control = static_cast<const ControlBlock*>(m_view);
++            if (control->magic != Magic || control->version != Version ||
++                control->width != Width || control->height != Height ||
++                control->slotCount != SlotCount)
++            {
++                UnmapViewOfFile(m_view);
++                CloseHandle(m_mapping);
++                m_view = nullptr;
++                m_mapping = nullptr;
++                CloseHandle(m_file);
++                m_file = INVALID_HANDLE_VALUE;
++                return false;
++            }
++            return true;
++        }
++
++        HRESULT EnsureResources(ID3D11Device* device, std::uint32_t producerPid,
++            const LUID& producerAdapterLuid)
++        {
++            if (device == nullptr)
++            {
++                return E_POINTER;
++            }
++            if (m_device.Get() == device && m_context != nullptr && m_producerPid == producerPid)
++            {
++                return S_OK;
++            }
++            ResetResources();
++            RETURN_IF_FAILED(device->QueryInterface(IID_PPV_ARGS(&m_device)));
++            Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
++            RETURN_IF_FAILED(m_device.As(&dxgiDevice));
++            Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
++            RETURN_IF_FAILED(dxgiDevice->GetAdapter(&adapter));
++            DXGI_ADAPTER_DESC adapterDescription{};
++            RETURN_IF_FAILED(adapter->GetDesc(&adapterDescription));
++            if (adapterDescription.AdapterLuid.HighPart != producerAdapterLuid.HighPart ||
++                adapterDescription.AdapterLuid.LowPart != producerAdapterLuid.LowPart)
++            {
++                if (!m_adapterMismatchLogged)
++                {
++                    char mismatch[160]{};
++                    sprintf_s(mismatch,
++                        "adapter-luid-mismatch producer=%08lx:%08lx source=%08lx:%08lx",
++                        static_cast<unsigned long>(producerAdapterLuid.HighPart),
++                        static_cast<unsigned long>(producerAdapterLuid.LowPart),
++                        static_cast<unsigned long>(adapterDescription.AdapterLuid.HighPart),
++                        static_cast<unsigned long>(adapterDescription.AdapterLuid.LowPart));
++                    Trace(mismatch);
++                    m_adapterMismatchLogged = true;
++                }
++                return DXGI_ERROR_INVALID_CALL;
++            }
++            m_device->GetImmediateContext(&m_context);
++            Microsoft::WRL::ComPtr<ID3D11Device1> device1;
++            RETURN_IF_FAILED(m_device.As(&device1));
++            for (std::uint32_t index = 0; index < SlotCount; ++index)
++            {
++                const std::wstring name = std::wstring(TextureNamePrefix) +
++                    std::to_wstring(producerPid) + L"_" + std::to_wstring(index);
++                const HRESULT openResult = device1->OpenSharedResourceByName(
++                    name.c_str(), DXGI_SHARED_RESOURCE_READ,
++                    IID_PPV_ARGS(&m_sharedTextures[index]));
++                if (FAILED(openResult))
++                {
++                    TraceError("open-shared-resource", static_cast<DWORD>(openResult));
++                    return openResult;
++                }
++                RETURN_IF_FAILED(m_sharedTextures[index].As(&m_mutexes[index]));
++                D3D11_TEXTURE2D_DESC desc{};
++                m_sharedTextures[index]->GetDesc(&desc);
++                if (desc.Width != Width || desc.Height != Height || desc.Format != DXGI_FORMAT_NV12)
++                {
++                    return MF_E_INVALIDMEDIATYPE;
++                }
++            }
++            m_producerPid = producerPid;
++            m_lastSequence = 0;
++            return S_OK;
++        }
++
++        void ResetResources()
++        {
++            for (auto& mutex : m_mutexes)
++            {
++                mutex.Reset();
++            }
++            for (auto& texture : m_sharedTextures)
++            {
++                texture.Reset();
++            }
++            m_context.Reset();
++            m_device.Reset();
++            m_producerPid = 0;
++        }
++
++        bool m_adapterMismatchLogged = false;
++        HANDLE m_file = INVALID_HANDLE_VALUE;
++        HANDLE m_mapping = nullptr;
++        void* m_view = nullptr;
++        LONG64 m_lastSequence = 0;
++        std::uint32_t m_producerPid = 0;
++        Microsoft::WRL::ComPtr<ID3D11Device> m_device;
++        Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
++        std::array<Microsoft::WRL::ComPtr<ID3D11Texture2D>, SlotCount> m_sharedTextures;
++        std::array<Microsoft::WRL::ComPtr<IDXGIKeyedMutex>, SlotCount> m_mutexes;
++    };
++}
+diff --git a/VirtualCameraMediaSource/SimpleMediaSource.cpp b/VirtualCameraMediaSource/SimpleMediaSource.cpp
+index 3b65b2b1365854837cf63bdd069c3814f4b4d2bd..48974f92f48ab498c61c023fc8f1cec228f4caea 100644
+--- a/VirtualCameraMediaSource/SimpleMediaSource.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaSource.cpp
+@@ -35,7 +35,7 @@ namespace winrt::WindowsSample::implementation
+         {
+             auto ptr = winrt::make_self<SimpleMediaStream>();
+             m_streamList[i] = ptr.detach();
+-            RETURN_IF_FAILED(m_streamList[i]->Initialize(this, i, MFSampleAllocatorUsage_UsesProvidedAllocator));
++            RETURN_IF_FAILED(m_streamList[i]->Initialize(this, i, MFSampleAllocatorUsage_UsesCustomAllocator));
+ 
+             RETURN_IF_FAILED(m_streamList[i]->GetStreamDescriptor(&streamDescriptorList[i]));
+         }
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+index bf6dbc635449abeb64dd0cb4e623765f5f04ba2a..33bbdb69ef15b596ffe7b09340690b53ef1cb8fe 100644
+--- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+@@ -361,6 +361,14 @@ namespace winrt::WindowsSample::implementation
+ 
+         m_spAttributes.reset();
+         m_spStreamDesc.reset();
++        if (m_spSampleAllocator != nullptr)
++        {
++            (void)m_spSampleAllocator->UninitializeSampleAllocator();
++            m_spSampleAllocator.reset();
++        }
++        m_spDXGIManager.reset();
++        m_spAllocatorDevice.reset();
++        m_dxgiResetToken = 0;
+         m_streamState = MF_STREAM_STATE_STOPPED;
+         return S_OK;
+     }
+@@ -408,7 +416,7 @@ namespace winrt::WindowsSample::implementation
+         }
+ 
+         m_frameReadyEvent = CreateEventW(
+-            nullptr, FALSE, FALSE, SparkFaceFallback::FrameReadyEventName);
++            nullptr, FALSE, FALSE, SparkFaceD3D11::FrameReadyEventName);
+         m_deadlineTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
+         if (m_frameReadyEvent == nullptr || m_deadlineTimer == nullptr)
+         {
+@@ -516,6 +524,7 @@ namespace winrt::WindowsSample::implementation
+     _Requires_lock_held_(m_Lock)
+     HRESULT SimpleMediaStream::DeliverPendingSampleRequiresLock(bool deadlineWake)
+     {
++        (void)deadlineWake;
+         if (m_pendingCount == 0)
+         {
+             return S_OK;
+@@ -523,33 +532,10 @@ namespace winrt::WindowsSample::implementation
+ 
+         PendingRequest& request = m_pendingRequests[m_pendingHead];
+         wil::com_ptr_nothrow<IMFSample> sample;
+-        wil::com_ptr_nothrow<IMFMediaBuffer> outputBuffer;
+-        wil::com_ptr_nothrow<IMF2DBuffer2> buffer2D;
+         RETURN_IF_FAILED(m_spSampleAllocator->AllocateSample(&sample));
+-        RETURN_IF_FAILED(sample->GetBufferByIndex(0, &outputBuffer));
+-        RETURN_IF_FAILED(outputBuffer->QueryInterface(IID_PPV_ARGS(&buffer2D)));
+-
+-        LONG pitch = 0;
+-        BYTE* bufferStart = nullptr;
+-        DWORD bufferLength = 0;
+-        BYTE* buffer = nullptr;
+-        RETURN_IF_FAILED(buffer2D->Lock2DSize(
+-            MF2DBuffer_LockFlags_Write, &buffer, &pitch, &bufferStart, &bufferLength));
+ 
+         bool delivered = false;
+-        HRESULT result = m_spFrameGenerator->CreateFrame(
+-            buffer, bufferLength, pitch, m_rgbMask, request.requestEntryQpc,
+-            deadlineWake, &delivered);
+-        if (SUCCEEDED(result) && delivered)
+-        {
+-            m_spFrameGenerator->FinalizeSamplePayload(buffer, bufferLength);
+-        }
+-        const HRESULT unlockResult = buffer2D->Unlock2D();
+-        if (FAILED(result))
+-        {
+-            return result;
+-        }
+-        RETURN_IF_FAILED(unlockResult);
++        RETURN_IF_FAILED(m_d3d11Source.CopyLatestToSample(sample.get(), &delivered));
+         if (!delivered)
+         {
+             return S_OK;
+@@ -624,7 +610,62 @@ namespace winrt::WindowsSample::implementation
+             }
+             else
+             {
+-                RETURN_IF_FAILED(MFCreateVideoSampleAllocatorEx(IID_PPV_ARGS(&m_spSampleAllocator)));
++                wil::com_ptr_nothrow<IDXGIFactory1> factory;
++                RETURN_IF_FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
++                wil::com_ptr_nothrow<IDXGIAdapter1> adapter;
++                wil::com_ptr_nothrow<IDXGIAdapter1> fallback;
++                for (UINT index = 0; ; ++index)
++                {
++                    wil::com_ptr_nothrow<IDXGIAdapter1> candidate;
++                    if (factory->EnumAdapters1(index, &candidate) == DXGI_ERROR_NOT_FOUND)
++                    {
++                        break;
++                    }
++                    DXGI_ADAPTER_DESC1 description{};
++                    RETURN_IF_FAILED(candidate->GetDesc1(&description));
++                    if ((description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
++                    {
++                        continue;
++                    }
++                    if (fallback == nullptr)
++                    {
++                        fallback = candidate;
++                    }
++                    if (description.VendorId == 0x8086)
++                    {
++                        adapter = candidate;
++                        break;
++                    }
++                }
++                if (adapter == nullptr)
++                {
++                    adapter = fallback;
++                }
++                RETURN_HR_IF_NULL_MSG(E_FAIL, adapter, "No hardware DXGI adapter found");
++
++                D3D_FEATURE_LEVEL featureLevel{};
++                constexpr UINT deviceFlags =
++                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
++                RETURN_IF_FAILED(D3D11CreateDevice(adapter.get(), D3D_DRIVER_TYPE_UNKNOWN,
++                    nullptr, deviceFlags, nullptr, 0, D3D11_SDK_VERSION,
++                    &m_spAllocatorDevice, &featureLevel, nullptr));
++                RETURN_IF_FAILED(MFCreateDXGIDeviceManager(
++                    &m_dxgiResetToken, &m_spDXGIManager));
++                RETURN_IF_FAILED(m_spDXGIManager->ResetDevice(
++                    m_spAllocatorDevice.get(), m_dxgiResetToken));
++
++                wil::com_ptr_nothrow<IMFVideoSampleAllocatorEx> allocator;
++                RETURN_IF_FAILED(MFCreateVideoSampleAllocatorEx(IID_PPV_ARGS(&allocator)));
++                RETURN_IF_FAILED(allocator->SetDirectXManager(m_spDXGIManager.get()));
++                wil::com_ptr_nothrow<IMFAttributes> allocatorAttributes;
++                RETURN_IF_FAILED(MFCreateAttributes(&allocatorAttributes, 2));
++                RETURN_IF_FAILED(allocatorAttributes->SetUINT32(
++                    MF_SA_D3D11_USAGE, D3D11_USAGE_DEFAULT));
++                RETURN_IF_FAILED(allocatorAttributes->SetUINT32(
++                    MF_SA_D3D11_BINDFLAGS, D3D11_BIND_RENDER_TARGET));
++                RETURN_IF_FAILED(allocator->InitializeSampleAllocatorEx(
++                    10, 10, allocatorAttributes.get(), m_spMediaType.get()));
++                m_spSampleAllocator = allocator;
+             }
+ 
+             UINT32 width, height;
+@@ -633,7 +674,10 @@ namespace winrt::WindowsSample::implementation
+             MFGetAttributeSize(m_spMediaType.get(), MF_MT_FRAME_SIZE, &width, &height);
+ 
+             DEBUG_MSG(L"Initialize sample allocator for mediatype: %s, %dx%d ", winrt::to_hstring(subType).data(), width, height);
+-            RETURN_IF_FAILED(m_spSampleAllocator->InitializeSampleAllocator(10, m_spMediaType.get()));
++            if (m_allocatorUsage == MFSampleAllocatorUsage_UsesProvidedAllocator)
++            {
++                RETURN_IF_FAILED(m_spSampleAllocator->InitializeSampleAllocator(10, m_spMediaType.get()));
++            }
+             if (m_spFrameGenerator == nullptr)
+             {
+                 m_spFrameGenerator = wil::make_unique_nothrow<SimpleFrameGenerator>();
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.h b/VirtualCameraMediaSource/SimpleMediaStream.h
+index 9020682a7416fcde581550ce489449ae800c0953..7a7b86c6c9015cd6bdb0d7bb16184b0c3f0501a0 100644
+--- a/VirtualCameraMediaSource/SimpleMediaStream.h
++++ b/VirtualCameraMediaSource/SimpleMediaStream.h
+@@ -7,6 +7,7 @@
+ 
+ #include <array>
+ #include <cstdint>
++#include "D3D11FrameSource.h"
+ 
+ #include "SimpleMediaSource.h"
+ #include "VirtualCameraMediaSource.h"
+@@ -78,8 +79,12 @@ namespace winrt::WindowsSample::implementation
+         wil::com_ptr_nothrow<IMFAttributes> m_spAttributes;
+         wil::com_ptr_nothrow<IMFStreamDescriptor> m_spStreamDesc;
+         wil::com_ptr_nothrow<IMFVideoSampleAllocator> m_spSampleAllocator;
++        wil::com_ptr_nothrow<ID3D11Device> m_spAllocatorDevice;
++        wil::com_ptr_nothrow<IMFDXGIDeviceManager> m_spDXGIManager;
++        UINT m_dxgiResetToken = 0;
+         wistd::unique_ptr<SimpleFrameGenerator> m_spFrameGenerator;
+         wil::com_ptr_nothrow<IMFMediaType> m_spMediaType;
++        SparkFaceD3D11::FrameSource m_d3d11Source;
+ 
+         static constexpr std::size_t PendingRequestCapacity = 16;
+         std::array<PendingRequest, PendingRequestCapacity> m_pendingRequests{};
+diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.h b/VirtualCameraMediaSource/VirtualCameraMediaSource.h
+index 5ade9c044c0cb0b6e6f6074ffc0e845d9e7cb187..8b923306df45d7c30aa016d7d3a2a688c02535a1 100644
+--- a/VirtualCameraMediaSource/VirtualCameraMediaSource.h
++++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.h
+@@ -13,7 +13,7 @@ DEFINE_GUID(CLSID_VirtualCameraMediaSource,
+     0xa1d6a9e3, 0x6d95, 0x4da8, 0xab, 0x2e, 0x98, 0x7b, 0x53, 0x22, 0xf8, 0x61);
+ 
+ static LPCWSTR VIRTUALCAMERAMEDIASOURCE_CLSID = L"{A1D6A9E3-6D95-4DA8-AB2E-987B5322F861}";
+-static LPCWSTR VIRTUALCAMERAMEDIASOURCE_FRIENDLYNAME = L"SparkFace Phase0 B2 Media Source";
++static LPCWSTR VIRTUALCAMERAMEDIASOURCE_FRIENDLYNAME = L"SparkFace Phase0 D Media Source";
+ 
+ // The below 2 GUIDs are defined in Windows build 22621 and above only, 
+ // if targetting SDK for Windows 22621 or higher this would need to be commented out.
