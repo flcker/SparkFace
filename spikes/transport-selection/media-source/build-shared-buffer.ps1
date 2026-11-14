@@ -20,7 +20,8 @@ $patches = @(
     (Join-Path $PSScriptRoot "windows-camera-shared-buffer.patch"),
     (Join-Path $PSScriptRoot "windows-camera-compressed.patch"),
     (Join-Path $PSScriptRoot "windows-camera-reduced-modes.patch"),
-    (Join-Path $PSScriptRoot "windows-camera-request-paced.patch")
+    (Join-Path $PSScriptRoot "windows-camera-request-paced.patch"),
+    (Join-Path $PSScriptRoot "windows-camera-source-local.patch")
 )
 $nuget = Join-Path $repositoryRoot "build/tools/nuget.exe"
 
@@ -96,6 +97,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../mf-shared-buffer/shared_ring
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../codec-bridge/CompressedFrameSource.h") `
     -Destination (Join-Path $mediaSource "CompressedFrameSource.h")
 
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/SourceLocalRenderer.h") `
+    -Destination (Join-Path $mediaSource "SourceLocalRenderer.h")
 & $nuget restore (Join-Path $virtualCamera "VirtualCameraSample.sln") `
     -PackagesDirectory (Join-Path $virtualCamera "packages") -NonInteractive
 if ($LASTEXITCODE -ne 0) {

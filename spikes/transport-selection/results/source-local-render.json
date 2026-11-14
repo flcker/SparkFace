@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "candidate": "S1 source-local render",
+  "measurement_state": "completed with conditional gate gaps",
+  "outcome": "AUTOMATED_PASS",
+  "contract": {
+    "subtype": "NV12",
+    "width": 1920,
+    "height": 1080,
+    "nominal_fps": 30,
+    "minimum_fps": 29.5,
+    "maximum_p95_ms": 33.3,
+    "required_frames": 1000
+  },
+  "topology": {
+    "app_to_source_transport": "none",
+    "render_process": "Frame Server media-source host",
+    "observed_host_identity": "svchost.exe running as NT AUTHORITY\\LocalService in session 0",
+    "allocator_adapter_luid": "00000000:000178d8",
+    "render_path": "source-local D3D11 BGRA render followed by D3D11 video-processor conversion into allocator-owned NV12 textures",
+    "full_frame_cpu_copies_before_frame_server": 0
+  },
+  "automated_gate": {
+    "status": "PASS",
+    "measurement_build": "final output-view-cache implementation",
+    "frames": 1000,
+    "valid_frames": 1000,
+    "fps": 30.258,
+    "source_local_render_to_client_p50_ms": 9.295,
+    "source_local_render_to_client_p95_ms": 12.259,
+    "source_local_render_to_client_p99_ms": 13.916,
+    "source_local_render_to_client_max_ms": 16.998,
+    "skipped_sequences": 0,
+    "duplicate_sequences": 0,
+    "malformed_markers": 0,
+    "torn_markers": 0,
+    "full_frame_cpu_copies_before_frame_server": 0,
+    "expected_sparse_trace_checkpoints": 10,
+    "observed_sparse_trace_checkpoints": 10,
+    "cpu_gpu_utilization": "not measured"
+  },
+  "recovery": {
+    "status": "PARTIAL_PASS",
+    "frame_server_restart_and_client_reopen_after_30_seconds": "PASS",
+    "sleep_resume": "not run",
+    "privacy_toggle": "not run",
+    "logoff_login": "not run"
+  },
+  "applications": {
+    "status": "PARTIAL_PASS",
+    "obs_studio_33_0_0": {
+      "preview": "PASS",
+      "recording": "PASS",
+      "recorded_width": 1920,
+      "recorded_height": 1080,
+      "recorded_average_fps": 30.0,
+      "recorded_frames": 1362,
+      "recorded_duration_seconds": 45.4,
+      "ten_minute_soak": "PASS",
+      "reconnect": "PASS",
+      "soak_process_alive": true,
+      "soak_trace_bytes_start": 1900,
+      "soak_trace_bytes_end": 9300,
+      "soak_last_conversion_count": 21900
+    },
+    "tencent_meeting_3_47_2_405": {
+      "preview": "PASS",
+      "reconnect": "PASS",
+      "reconnect_pre_close_conversion_count": 22000,
+      "reconnect_post_reopen_conversion_count": 500,
+      "ten_minute_soak": "PASS",
+      "soak_process_alive": true,
+      "soak_trace_bytes_start": 11410,
+      "soak_trace_bytes_end": 18793,
+      "soak_last_conversion_count": 20200
+    },
+    "not_installed": [
+      "Zoom",
+      "Microsoft Teams",
+      "Discord",
+      "DingTalk"
+    ]
+  },
+  "remaining_gates": [
+    "H5 application coverage for Zoom, Microsoft Teams, Discord, and DingTalk",
+    "H6 sleep/resume, privacy-toggle, and logoff/login recovery",
+    "H8 integrated face and beauty pipeline",
+    "H9 product control, deployment, update, and security model"
+  ],
+  "selection": "none",
+  "selection_reason": "S1 passes the automated 1080p30 gate, but required conditional application, recovery, integration, and product-security evidence remains incomplete."
+}
