@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "candidate": "A1/A2 COM activation topology",
+  "a0_in_process_baseline": {
+    "outcome": "NO-GO",
+    "detail": "The retained InprocServer32 media source activates inside the Windows Camera Frame Server svchost process. M2 measured this baseline at 33.569ms producer-owned p95 and 33.428ms source-owned p95, both above the 33.3ms gate."
+  },
+  "a1_local_server": {
+    "outcome": "NO-GO",
+    "requested_frames": 2,
+    "delivered_frames": 0,
+    "local_server_registered": true,
+    "local_server_stopped_cleanly": true,
+    "activation_hresult": "0x80040154",
+    "activation_error": "REGDB_E_CLASSNOTREG",
+    "detail": "The virtual-camera IMFActivate path did not resolve a LocalServer32 class factory; no media source or first frame was activated."
+  },
+  "a2_com_surrogate": {
+    "outcome": "NO-GO",
+    "requested_frames": 2,
+    "delivered_frames": 2,
+    "marker_errors": 0,
+    "full_frame_cpu_copy_before_frame_server": 0,
+    "expected_activation_image": "dllhost.exe",
+    "observed_activation_image": "C:\\WINDOWS\\System32\\svchost.exe",
+    "observed_activation_pid": 15528,
+    "detail": "Adding AppID/DllSurrogate did not change the virtual-camera activation topology. COM still loaded the InprocServer32 media source into the Frame Server svchost process, so the surrogate candidate did not activate and does not advance to the 1000-frame gate."
+  },
+  "conditional_checks": {
+    "automated_1000_frame": "not-run; neither A1 nor A2 established the candidate activation topology",
+    "recovery": "not-run; first-frame topology gate failed",
+    "applications": "not-run; first-frame topology gate failed",
+    "soak": "not-run; first-frame topology gate failed"
+  },
+  "verdict": "A1 and A2 are NO-GO. The Windows virtual-camera activation path accepted the registered InprocServer32 source only: LocalServer32 returned REGDB_E_CLASSNOTREG, while DllSurrogate was ignored and the source remained in Frame Server svchost.exe."
+}

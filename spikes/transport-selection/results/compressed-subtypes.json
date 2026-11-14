@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "candidate": "M7/M8 direct compressed camera subtypes",
+  "fixture_encoder": {
+    "name": "FFmpeg full build",
+    "version": "9.0.2",
+    "license": "GPL-3.0",
+    "input": "NV12 1920x1080 deterministic marker frame",
+    "note": "Fixture generation is probe-only and is not a SparkFace runtime dependency."
+  },
+  "m7_h264_elementary_stream": {
+    "outcome": "NO-GO",
+    "source_subtype": "MFVideoFormat_H264_ES",
+    "requested_client_subtype": "MFVideoFormat_NV12",
+    "requested_frames": 1,
+    "delivered_frames": 0,
+    "activation_hresult": "0xC00D36B4",
+    "activation_error": "MF_E_INVALIDMEDIATYPE",
+    "detail": "The Frame Server virtual-camera activation rejected the compressed source media type before the queued Annex-B H.264 fixture could reach the diagnostic client."
+  },
+  "m8_mjpeg": {
+    "outcome": "NO-GO",
+    "source_subtype": "MFVideoFormat_MJPG",
+    "requested_client_subtype": "MFVideoFormat_NV12",
+    "requested_frames": 1,
+    "delivered_frames": 0,
+    "activation_hresult": "0xC00D36B4",
+    "activation_error": "MF_E_INVALIDMEDIATYPE",
+    "detail": "The Frame Server virtual-camera activation rejected the MJPEG source media type before the queued JPEG fixture could reach the diagnostic client."
+  },
+  "conditional_checks": {
+    "automated_1000_frame": "not-run; both compressed subtypes failed source activation",
+    "recovery": "not-run; first-frame gate failed",
+    "applications": "not-run; first-frame gate failed",
+    "soak": "not-run; first-frame gate failed"
+  },
+  "verdict": "M7 and M8 are NO-GO under the unchanged NV12 standard-camera contract. Both direct compressed source subtypes were rejected at IMFActivate::ActivateObject with MF_E_INVALIDMEDIATYPE, so Frame Server did not expose a decoded NV12 mode."
+}

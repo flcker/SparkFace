@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "candidate": "G1 source-LUID device selection with D3D11 same-adapter shared NV12 textures",
+  "producer_adapter_luid": "00000000:000178d8",
+  "frame_server_allocator_adapter_luid": "00000000:000178d8",
+  "first_frame_gate": {
+    "outcome": "PASS",
+    "requested_frames": 2,
+    "delivered_frames": 2,
+    "marker_errors": 0,
+    "skipped_sequences": 0,
+    "full_frame_cpu_copy_before_frame_server": 0
+  },
+  "automated_gate": {
+    "outcome": "NO-GO",
+    "requested_frames": 1000,
+    "delivered_frames": 1000,
+    "fps": 30.093,
+    "minimum_fps": 29.5,
+    "producer_to_client_frame_age_p50_ms": 40.066,
+    "producer_to_client_frame_age_p95_ms": 46.001,
+    "producer_to_client_frame_age_p99_ms": 48.593,
+    "producer_to_client_frame_age_max_ms": 173.826,
+    "maximum_frame_age_p95_ms": 33.3,
+    "skipped_sequences": 0,
+    "duplicate_sequences": 0,
+    "marker_errors": 0,
+    "full_frame_cpu_copy_before_frame_server": 0
+  },
+  "conditional_checks": {
+    "recovery": "not-run; automated latency gate failed",
+    "applications": "not-run; automated latency gate failed",
+    "soak": "not-run; automated latency gate failed"
+  },
+  "verdict": "Selecting the Frame Server allocator adapter removes Spike D's LUID mismatch and sustains the required frame rate without a full-frame CPU copy before Frame Server, but producer-to-client p95 remains 46.001ms and fails the 33.3ms product gate."
+}

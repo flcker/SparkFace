@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "id": "transport-selection",
+  "title": "Windows 11 virtual-camera transport architecture selection",
+  "status": "completed",
+  "upstream": {
+    "windows_camera": "microsoft/Windows-Camera@626f8b19c5f367602f2e89c6b314573d3776c9df"
+  },
+  "hardware": "Windows 11 Pro build 26300; 13th Gen Intel Core i7-13700H; Intel Iris Xe Graphics; driver 32.0.101.7092",
+  "dependencies": [
+    "Windows 11",
+    "MSVC 19.51.36256 x64",
+    "Windows SDK 10.0.26100",
+    "Direct3D 12",
+    "DXGI",
+    "Microsoft Windows-Camera",
+    "FFmpeg 9.0.2 full build (probe fixture generation only)"
+  ],
+  "artifacts": [
+    {
+      "name": "Microsoft Windows-Camera source archive",
+      "url": "https://codeload.github.com/microsoft/Windows-Camera/tar.gz/626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "version": "626f8b19c5f367602f2e89c6b314573d3776c9df",
+      "sha256": "d4c4217684d76e6e5934114a4d9ade0d0e6249fef70462d5cc451e3613674eec",
+      "license": "MIT",
+      "acquire": "scripts/build-transport-selection.ps1"
+    },
+    {
+      "name": "NuGet command line",
+      "url": "https://dist.nuget.org/win-x86-commandline/v7.9.0/nuget.exe",
+      "version": "7.9.0.83",
+      "sha256": "992d70cac5b06c38efec91806caba64cdcc07e6d963a0959dbbbaf264d33b800",
+      "license": "Apache-2.0",
+      "acquire": "scripts/build-transport-selection.ps1"
+    },
+    {
+      "name": "FFmpeg full build",
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build.zip",
+      "version": "9.0.2",
+      "sha256": "759d0a9831c436a0eb331ad36f236c06cb04aaa0005da46571f0e9d3d9206f6b",
+      "license": "GPL-3.0",
+      "acquire": "winget install --id Gyan.FFmpeg --version 9.0.2 --exact"
+    }
+  ],
+  "commands": {
+    "build": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-transport-selection.ps1"
+    ],
+    "run": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-transport-selection.ps1 -Stage CrossAdapterCapability",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -Mode ProducerOwned -Frames 1000 -MinimumFps 25 -MaximumP95Ms 33.3",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -Mode SourceOwned -Frames 1000 -MinimumFps 25 -MaximumP95Ms 33.3",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -ActivationTopology LocalServer -Frames 2",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -ActivationTopology Surrogate -Frames 2",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode H264 -Frames 1 -MaximumP95Ms 1000000000000",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode Mjpeg -Frames 1 -MaximumP95Ms 1000000000000"
+    ],
+    "cleanup": [
+      "Remove-Item -Recurse -Force build/windows-x64-release-transport-selection,build/transport-selection-results,build/tsb -ErrorAction SilentlyContinue"
+    ]
+  },
+  "gates": {
+    "transport_output": "NV12 1920x1080 at 30fps",
+    "minimum_fps": 29.5,
+    "maximum_frame_age_p95_ms": 33.3,
+    "correctness": "1000 delivered frames, strict sequence accounting, zero torn or malformed frames",
+    "applications": "OBS, Zoom, Microsoft Teams, Discord, DingTalk, and Tencent Meeting separately",
+    "recovery": "producer restart, 30-second stall, client reopen, sleep/resume, and privacy recovery",
+    "soak": "10 minutes each in OBS and Tencent Meeting"
+  },
+  "verdict": {
+    "outcome": "NO-GO",
+    "scope": "No tested Wave-1 user-mode transport passed the unchanged NV12 1920x1080 30fps gates. No transport primary or technical fallback is selected; recovery, application, soak, and integrated checks were not run because no candidate survived its preceding hard gate."
+  }
+}

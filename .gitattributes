@@ -1,1 +1,2 @@
 spikes/fallback/media-source/*.patch text eol=lf whitespace=-trailing-space
+spikes/d3d11-handoff/media-source/*.patch text eol=lf whitespace=-trailing-space

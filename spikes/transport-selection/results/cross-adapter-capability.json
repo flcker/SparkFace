@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "producer_adapter": {
+    "name": "Intel(R) Iris(R) Xe Graphics",
+    "luid": "00000000:0000ffd8",
+    "software": false,
+    "cross_node_sharing_tier": 0
+  },
+  "frame_server_allocator_adapter": {
+    "name": "Intel(R) Iris(R) Xe Graphics",
+    "luid": "00000000:000178d8",
+    "software": false,
+    "visible_to_interactive_process": true,
+    "cross_node_sharing_tier": 0
+  },
+  "g1_source_luid_device_selection": {
+    "outcome": "PASS_CAPABILITY",
+    "detail": "The Frame Server allocator LUID resolves to a hardware Intel Iris Xe DXGI adapter in the interactive process. End-to-end same-adapter delivery remains to be tested."
+  },
+  "g2_cross_adapter_textures": {
+    "outcome": "FAIL",
+    "r8_create_hresult": "0x80070057",
+    "nv12_create_hresult": "0x80070057",
+    "detail": "Both devices report D3D12_CROSS_NODE_SHARING_TIER_NOT_SUPPORTED; cross-adapter committed resource creation failed with E_INVALIDARG."
+  },
+  "g3_cross_adapter_buffer": {
+    "outcome": "FAIL",
+    "create_hresult": "0x80070057",
+    "detail": "The cross-adapter committed buffer could not be created, so shared-fence copy validation did not run."
+  }
+}
