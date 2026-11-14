@@ -220,17 +220,64 @@ result retains that observed contract behavior rather than relabeling it as
 24fps pacing. No mode advances to recovery, application, or soak testing. The
 reviewed result is retained in `results/request-paced.json`.
 
+## S1 source-local render
+
+S1 removes the app-to-source frame transport. The retained Windows-Camera
+patch connects `IMFVideoSampleAllocatorEx` to a source-local D3D11 device on
+the Intel adapter. For each `RequestSample`, the media source renders a
+deterministic moving BGRA marker and converts it with the D3D11 video processor
+directly into the allocator-owned NV12 texture. No full-frame CPU copy occurs
+before Frame Server.
+
+Run the clean build, temporary registration, 1,000-frame consumer gate, trace
+validation, and registration cleanup from elevated PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-source-local-render.ps1
+```
+
+`-KeepInstalled` retains the probe registration only for manual recovery and
+application checks. The default path always restores the prior registration
+and removes the probe flag in `finally`. The source trace records the hosting
+process/session, allocator adapter LUID, and one sparse GPU-conversion
+checkpoint per 100 frames; the runner rejects missing or stale checkpoints.
+
+The final strict run passed all automated gates:
+
+| Frames | Measured fps | Render-to-client p50 | p95 | p99 | Maximum | Sequence/marker errors | Pre-Frame-Server CPU copies | Outcome |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 1,000 | 30.258 | 9.295ms | 12.259ms | 13.916ms | 16.998ms | 0 | 0 | `PASS` |
+
+The reviewed measurement and conditional-check inventory are retained in
+`results/source-local-render.json`.
+
+The tested conditional subset also passed:
+
+- Frame Server restart, a 30-second closed interval, and client reopen.
+- OBS Studio 33.0.0 preview, a 1,362-frame 1920×1080 recording at 30fps,
+  reconnect, and a 10-minute soak.
+- Tencent Meeting 3.47.2.405 preview, reconnect, and a 10-minute soak.
+
+Zoom, Microsoft Teams, Discord, and DingTalk were not installed on the
+measurement machine. Sleep/resume, privacy-toggle, logoff/login, integrated
+face/beauty, and the product control/deployment/security model were not tested.
+S1 therefore remains an automated-pass candidate rather than a selected
+transport.
+
 ## Final decision
 
-No tested Wave-1 candidate passed the unchanged 1080p30 transport gates.
-Request-credit pacing restored 1080p30 throughput to 30.209fps and eliminated
-sequence skips, but producer-to-client frame-age p95 increased to 48.327ms
-against the unchanged 33.3ms maximum. No transport primary or technical
-fallback is selected.
+No tested Wave-1 app-to-source transport passed the unchanged 1080p30 gates.
+Request-credit pacing restored throughput and sequence correctness but failed
+the 33.3ms p95 latency gate. S1 avoids that transport boundary and passes the
+automated 1080p30 gate plus the available recovery, OBS, and Tencent Meeting
+subset. It is not selected because the complete H5 application matrix, H6
+recovery matrix, H8 integrated pipeline, and H9 product security/deployment
+evidence remain incomplete. No transport primary or technical fallback is
+selected.
 
-Reduced-mode characterization found one automated-gate survivor: M2
-source-owned at NV12 1920×1080 and 15fps. This is not yet an accepted product
-fallback; its 15fps product constraint and the conditional recovery,
-application, soak, and integrated gates require an explicit product decision.
-The v1 implementation plan remains blocked. See `results/summary.json`,
-`results/reduced-modes.json`, and `results/request-paced.json`.
+Reduced-mode characterization separately retains M2 source-owned NV12
+1920×1080 at 15fps as an unaccepted product-fallback candidate. The v1
+implementation plan remains blocked. See `results/summary.json`,
+`results/source-local-render.json`, `results/reduced-modes.json`, and
+`results/request-paced.json`.

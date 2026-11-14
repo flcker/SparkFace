@@ -27,6 +27,16 @@ target_compile_options(transport_source_adapter_consumer
 target_link_libraries(transport_source_adapter_consumer
                       PRIVATE mf mfplat mfreadwrite mfuuid ole32)
 
+add_executable(transport_source_local_consumer source-local/consumer.cpp)
+target_include_directories(transport_source_local_consumer
+                           PRIVATE "${TRANSPORT_D3D11_EVIDENCE_DIR}")
+target_compile_definitions(transport_source_local_consumer
+                           PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(transport_source_local_consumer
+                       PRIVATE /W4 /WX /permissive- /EHsc)
+target_link_libraries(transport_source_local_consumer
+                      PRIVATE mf mfplat mfreadwrite mfuuid ole32)
+
 add_executable(transport_source_adapter_registrar
                "${TRANSPORT_D3D11_EVIDENCE_DIR}/registrar/main.cpp")
 target_compile_definitions(transport_source_adapter_registrar

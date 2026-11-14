@@ -40,9 +40,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Transport-selection CMake configure failed with exit code $LASTEXITCODE"
     }
-    & cmake.exe --build $buildRoot --target transport_cross_adapter_probe `
-        transport_source_adapter_producer transport_source_adapter_consumer `
-        transport_source_adapter_registrar transport_shared_buffer_producer `
+    & $ninja -C $buildRoot transport_cross_adapter_probe transport_source_adapter_producer `
+        transport_source_adapter_consumer transport_source_adapter_registrar `
+        transport_source_local_consumer transport_shared_buffer_producer `
         transport_activation_local_server transport_codec_fixture
     if ($LASTEXITCODE -ne 0) {
         throw "Transport-selection build failed with exit code $LASTEXITCODE"

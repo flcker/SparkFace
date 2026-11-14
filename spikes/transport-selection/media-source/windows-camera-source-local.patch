@@ -1,0 +1,207 @@
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+--- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+@@ -30,6 +30,7 @@ namespace winrt::WindowsSample::implementation
+         m_allocatorUsage = allocatorUsage;
+         RETURN_IF_FAILED(m_compressedFrameSource.Initialize());
+         RETURN_IF_FAILED(m_sharedBufferSource.Initialize());
++        RETURN_IF_FAILED(m_sourceLocalRenderer.Initialize());
+         const auto& videoMode = m_sharedBufferSource.video_mode();
+ 
+         const uint32_t NUM_MEDIATYPES = 1;
+@@ -198,7 +199,8 @@ namespace winrt::WindowsSample::implementation
+         {
+             return MF_E_NOTACCEPTING;
+         }
+-        if (!m_compressedFrameSource.enabled())
++        if (!m_compressedFrameSource.enabled() &&
++            !m_sourceLocalRenderer.enabled())
+         {
+             RETURN_IF_FAILED(
+                 m_sharedBufferSource.RequestFrame(requestEntry.QuadPart));
+@@ -369,6 +371,15 @@ namespace winrt::WindowsSample::implementation
+ 
+         m_spAttributes.reset();
+         m_spStreamDesc.reset();
++        if (m_allocatorUsage == MFSampleAllocatorUsage_UsesCustomAllocator &&
++            m_spSampleAllocator != nullptr)
++        {
++            (void)m_spSampleAllocator->UninitializeSampleAllocator();
++            m_spSampleAllocator.reset();
++        }
++        m_spDXGIManager.reset();
++        m_spAllocatorDevice.reset();
++        m_dxgiResetToken = 0;
+         m_streamState = MF_STREAM_STATE_STOPPED;
+         return S_OK;
+     }
+@@ -525,22 +536,33 @@ namespace winrt::WindowsSample::implementation
+         }
+ 
+         PendingRequest& request = m_pendingRequests[m_pendingHead];
+-        IMFSample* rawSample = nullptr;
++        wil::com_ptr_nothrow<IMFSample> sample;
+         bool delivered = false;
+-        if (m_compressedFrameSource.enabled())
++        if (m_sourceLocalRenderer.enabled())
+         {
+-            RETURN_IF_FAILED(m_compressedFrameSource.CreateSample(&rawSample, &delivered));
++            RETURN_IF_FAILED(m_spSampleAllocator->AllocateSample(&sample));
++            RETURN_IF_FAILED(
++                m_sourceLocalRenderer.RenderSample(sample.get(), &delivered));
+         }
+         else
+         {
+-            RETURN_IF_FAILED(m_sharedBufferSource.CreateLatestSample(&rawSample, &delivered));
++            IMFSample* rawSample = nullptr;
++            if (m_compressedFrameSource.enabled())
++            {
++                RETURN_IF_FAILED(
++                    m_compressedFrameSource.CreateSample(&rawSample, &delivered));
++            }
++            else
++            {
++                RETURN_IF_FAILED(
++                    m_sharedBufferSource.CreateLatestSample(&rawSample, &delivered));
++            }
++            sample.attach(rawSample);
+         }
+         if (!delivered)
+         {
+             return S_OK;
+         }
+-        wil::com_ptr_nothrow<IMFSample> sample;
+-        sample.attach(rawSample);
+ 
+         RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
+         RETURN_IF_FAILED(sample->SetSampleDuration(
+@@ -618,7 +640,63 @@ namespace winrt::WindowsSample::implementation
+             }
+             else
+             {
+-                RETURN_IF_FAILED(MFCreateVideoSampleAllocatorEx(IID_PPV_ARGS(&m_spSampleAllocator)));
++                wil::com_ptr_nothrow<IDXGIFactory1> factory;
++                RETURN_IF_FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
++                wil::com_ptr_nothrow<IDXGIAdapter1> adapter;
++                wil::com_ptr_nothrow<IDXGIAdapter1> fallback;
++                for (UINT index = 0; ; ++index)
++                {
++                    wil::com_ptr_nothrow<IDXGIAdapter1> candidate;
++                    if (factory->EnumAdapters1(index, &candidate) == DXGI_ERROR_NOT_FOUND)
++                    {
++                        break;
++                    }
++                    DXGI_ADAPTER_DESC1 description{};
++                    RETURN_IF_FAILED(candidate->GetDesc1(&description));
++                    if ((description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0)
++                    {
++                        continue;
++                    }
++                    if (fallback == nullptr)
++                    {
++                        fallback = candidate;
++                    }
++                    if (description.VendorId == 0x8086)
++                    {
++                        adapter = candidate;
++                        break;
++                    }
++                }
++                if (adapter == nullptr)
++                {
++                    adapter = fallback;
++                }
++                RETURN_HR_IF_NULL_MSG(E_FAIL, adapter, "No hardware DXGI adapter found");
++
++                D3D_FEATURE_LEVEL featureLevel{};
++                constexpr UINT deviceFlags =
++                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
++                RETURN_IF_FAILED(D3D11CreateDevice(adapter.get(), D3D_DRIVER_TYPE_UNKNOWN,
++                    nullptr, deviceFlags, nullptr, 0, D3D11_SDK_VERSION,
++                    &m_spAllocatorDevice, &featureLevel, nullptr));
++                RETURN_IF_FAILED(MFCreateDXGIDeviceManager(
++                    &m_dxgiResetToken, &m_spDXGIManager));
++                RETURN_IF_FAILED(m_spDXGIManager->ResetDevice(
++                    m_spAllocatorDevice.get(), m_dxgiResetToken));
++
++                wil::com_ptr_nothrow<IMFVideoSampleAllocatorEx> allocator;
++                RETURN_IF_FAILED(MFCreateVideoSampleAllocatorEx(IID_PPV_ARGS(&allocator)));
++                RETURN_IF_FAILED(allocator->SetDirectXManager(m_spDXGIManager.get()));
++                wil::com_ptr_nothrow<IMFAttributes> allocatorAttributes;
++                RETURN_IF_FAILED(MFCreateAttributes(&allocatorAttributes, 2));
++                RETURN_IF_FAILED(allocatorAttributes->SetUINT32(
++                    MF_SA_D3D11_USAGE, D3D11_USAGE_DEFAULT));
++                RETURN_IF_FAILED(allocatorAttributes->SetUINT32(
++                    MF_SA_D3D11_BINDFLAGS,
++                    D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE));
++                RETURN_IF_FAILED(allocator->InitializeSampleAllocatorEx(
++                    10, 10, allocatorAttributes.get(), m_spMediaType.get()));
++                m_spSampleAllocator = allocator;
+             }
+ 
+             UINT32 width, height;
+@@ -627,7 +705,10 @@ namespace winrt::WindowsSample::implementation
+             MFGetAttributeSize(m_spMediaType.get(), MF_MT_FRAME_SIZE, &width, &height);
+ 
+             DEBUG_MSG(L"Initialize sample allocator for mediatype: %s, %dx%d ", winrt::to_hstring(subType).data(), width, height);
+-            RETURN_IF_FAILED(m_spSampleAllocator->InitializeSampleAllocator(10, m_spMediaType.get()));
++            if (m_allocatorUsage == MFSampleAllocatorUsage_UsesProvidedAllocator)
++            {
++                RETURN_IF_FAILED(m_spSampleAllocator->InitializeSampleAllocator(10, m_spMediaType.get()));
++            }
+             if (m_spFrameGenerator == nullptr)
+             {
+                 m_spFrameGenerator = wil::make_unique_nothrow<SimpleFrameGenerator>();
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.h b/VirtualCameraMediaSource/SimpleMediaStream.h
+--- a/VirtualCameraMediaSource/SimpleMediaStream.h
++++ b/VirtualCameraMediaSource/SimpleMediaStream.h
+@@ -9,6 +9,7 @@
+ #include <cstdint>
+ #include "CompressedFrameSource.h"
+ #include "SharedMemorySampleSource.h"
++#include "SourceLocalRenderer.h"
+ 
+ #include "SimpleMediaSource.h"
+ #include "VirtualCameraMediaSource.h"
+@@ -80,10 +81,14 @@ namespace winrt::WindowsSample::implementation
+         wil::com_ptr_nothrow<IMFAttributes> m_spAttributes;
+         wil::com_ptr_nothrow<IMFStreamDescriptor> m_spStreamDesc;
+         wil::com_ptr_nothrow<IMFVideoSampleAllocator> m_spSampleAllocator;
++        wil::com_ptr_nothrow<ID3D11Device> m_spAllocatorDevice;
++        wil::com_ptr_nothrow<IMFDXGIDeviceManager> m_spDXGIManager;
++        UINT m_dxgiResetToken = 0;
+         wistd::unique_ptr<SimpleFrameGenerator> m_spFrameGenerator;
+         wil::com_ptr_nothrow<IMFMediaType> m_spMediaType;
+         SparkFaceSharedBuffer::SampleSource m_sharedBufferSource;
+         SparkFaceCompressed::FrameSource m_compressedFrameSource;
++        SparkFaceSourceLocal::Renderer m_sourceLocalRenderer;
+ 
+         static constexpr std::size_t PendingRequestCapacity = 16;
+         std::array<PendingRequest, PendingRequestCapacity> m_pendingRequests{};
+diff --git a/VirtualCameraMediaSource/SimpleMediaSource.cpp b/VirtualCameraMediaSource/SimpleMediaSource.cpp
+--- a/VirtualCameraMediaSource/SimpleMediaSource.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaSource.cpp
+@@ -35,7 +35,11 @@ namespace winrt::WindowsSample::implementation
+         {
+             auto ptr = winrt::make_self<SimpleMediaStream>();
+             m_streamList[i] = ptr.detach();
+-            RETURN_IF_FAILED(m_streamList[i]->Initialize(this, i, MFSampleAllocatorUsage_UsesProvidedAllocator));
++            const auto allocatorUsage =
++                GetFileAttributesW(SparkFaceSourceLocal::EnablePath) != INVALID_FILE_ATTRIBUTES
++                    ? MFSampleAllocatorUsage_UsesCustomAllocator
++                    : MFSampleAllocatorUsage_UsesProvidedAllocator;
++            RETURN_IF_FAILED(m_streamList[i]->Initialize(this, i, allocatorUsage));
+ 
+             RETURN_IF_FAILED(m_streamList[i]->GetStreamDescriptor(&streamDescriptorList[i]));
+         }
+diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+--- a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
++++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+@@ -63,6 +63,7 @@
+     <ClInclude Include="CompressedFrameSource.h" />
+     <ClInclude Include="SharedMemorySampleSource.h" />
+     <ClInclude Include="SharedRingProtocol.h" />
++    <ClInclude Include="SourceLocalRenderer.h" />
+     <ClInclude Include="HWMediaSource.h" />
+     <ClInclude Include="HWMediaStream.h" />
+     <ClInclude Include="pch.h" />
