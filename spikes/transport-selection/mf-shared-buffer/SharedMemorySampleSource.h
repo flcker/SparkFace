@@ -34,7 +34,7 @@ inline void Trace(const char* message) {
 
 class RingMapping final {
   public:
-    static HRESULT Open(RingMapping** output) {
+    static HRESULT Open(const VideoMode& mode, RingMapping** output) {
         if (output == nullptr) {
             return E_POINTER;
         }
@@ -85,18 +85,19 @@ class RingMapping final {
             }
             header->magic = Magic;
             header->version = Version;
-            header->width = Width;
-            header->height = Height;
-            header->frameBytes = static_cast<std::uint32_t>(FrameBytes);
+            header->width = mode.width;
+            header->height = mode.height;
+            header->frameBytes = static_cast<std::uint32_t>(frame_bytes(mode));
+            header->frameRate = mode.frameRate;
             header->slotCount = SlotCount;
             header->ownerMode = 2;
             header->qpcFrequency = frequency.QuadPart;
             Trace("ring-created-by-source");
         }
         if (header->magic != Magic || header->version != Version ||
-            header->width != Width || header->height != Height ||
-            header->frameBytes != static_cast<std::uint32_t>(FrameBytes) ||
-            header->slotCount != SlotCount) {
+            header->width != mode.width || header->height != mode.height ||
+            header->frameBytes != frame_bytes(mode) ||
+            header->frameRate != mode.frameRate || header->slotCount != SlotCount) {
             UnmapViewOfFile(view);
             CloseHandle(mapping);
             CloseHandle(file);
@@ -149,7 +150,8 @@ class RingMapping final {
 class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
   public:
     SharedMediaBuffer(RingMapping* mapping, SlotHeader* slot)
-        : mapping_(mapping), slot_(slot), currentLength_(FrameBytes) {
+        : mapping_(mapping), slot_(slot),
+          currentLength_(mapping->header()->frameBytes) {
         mapping_->AddRef();
     }
 
@@ -191,7 +193,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         }
         *buffer = reinterpret_cast<BYTE*>(slot_payload(slot_));
         if (maximumLength != nullptr) {
-            *maximumLength = static_cast<DWORD>(FrameBytes);
+            *maximumLength = mapping_->header()->frameBytes;
         }
         if (currentLength != nullptr) {
             *currentLength = static_cast<DWORD>(currentLength_.load());
@@ -211,7 +213,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
     }
 
     STDMETHODIMP SetCurrentLength(DWORD currentLength) override {
-        if (currentLength > FrameBytes) {
+        if (currentLength > mapping_->header()->frameBytes) {
             return E_INVALIDARG;
         }
         currentLength_.store(currentLength);
@@ -222,7 +224,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         if (maximumLength == nullptr) {
             return E_POINTER;
         }
-        *maximumLength = static_cast<DWORD>(FrameBytes);
+        *maximumLength = mapping_->header()->frameBytes;
         return S_OK;
     }
 
@@ -231,7 +233,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
             return E_POINTER;
         }
         *scanline0 = reinterpret_cast<BYTE*>(slot_payload(slot_));
-        *pitch = static_cast<LONG>(Width);
+        *pitch = static_cast<LONG>(mapping_->header()->width);
         InterlockedIncrement64(&mapping_->header()->bufferLock2DCalls);
         return S_OK;
     }
@@ -243,7 +245,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
             return E_POINTER;
         }
         *scanline0 = reinterpret_cast<BYTE*>(slot_payload(slot_));
-        *pitch = static_cast<LONG>(Width);
+        *pitch = static_cast<LONG>(mapping_->header()->width);
         return S_OK;
     }
 
@@ -259,7 +261,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         if (length == nullptr) {
             return E_POINTER;
         }
-        *length = static_cast<DWORD>(FrameBytes);
+        *length = mapping_->header()->frameBytes;
         return S_OK;
     }
 
@@ -267,10 +269,11 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         if (destination == nullptr) {
             return E_POINTER;
         }
-        if (length < FrameBytes) {
+        const DWORD frameBytes = mapping_->header()->frameBytes;
+        if (length < frameBytes) {
             return MF_E_BUFFERTOOSMALL;
         }
-        std::memcpy(destination, slot_payload(slot_), FrameBytes);
+        std::memcpy(destination, slot_payload(slot_), frameBytes);
         InterlockedIncrement64(&mapping_->header()->contiguousCopyToCalls);
         return S_OK;
     }
@@ -279,10 +282,11 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         if (source == nullptr) {
             return E_POINTER;
         }
-        if (length < FrameBytes) {
+        const DWORD frameBytes = mapping_->header()->frameBytes;
+        if (length < frameBytes) {
             return E_INVALIDARG;
         }
-        std::memcpy(slot_payload(slot_), source, FrameBytes);
+        std::memcpy(slot_payload(slot_), source, frameBytes);
         InterlockedIncrement64(&mapping_->header()->contiguousCopyFromCalls);
         return S_OK;
     }
@@ -296,9 +300,9 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
         }
         auto* payload = reinterpret_cast<BYTE*>(slot_payload(slot_));
         *scanline0 = payload;
-        *pitch = static_cast<LONG>(Width);
+        *pitch = static_cast<LONG>(mapping_->header()->width);
         *bufferStart = payload;
-        *bufferLength = static_cast<DWORD>(FrameBytes);
+        *bufferLength = mapping_->header()->frameBytes;
         InterlockedIncrement64(&mapping_->header()->bufferLock2DCalls);
         return S_OK;
     }
@@ -316,12 +320,13 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
             &bufferLength));
         HRESULT result = S_OK;
         const auto absolutePitch = static_cast<DWORD>(pitch < 0 ? -pitch : pitch);
-        constexpr DWORD rowCount = Height * 3 / 2;
-        if (absolutePitch >= Width && bufferLength >= absolutePitch * rowCount) {
+        const DWORD width = mapping_->header()->width;
+        const DWORD rowCount = mapping_->header()->height * 3 / 2;
+        if (absolutePitch >= width && bufferLength >= absolutePitch * rowCount) {
             const auto* source = reinterpret_cast<const BYTE*>(slot_payload(slot_));
             for (DWORD row = 0; row < rowCount; ++row) {
                 std::memcpy(scanline + static_cast<std::ptrdiff_t>(row) * pitch,
-                            source + static_cast<std::size_t>(row) * Width, Width);
+                            source + static_cast<std::size_t>(row) * width, width);
             }
         } else {
             result = MF_E_BUFFERTOOSMALL;
@@ -347,6 +352,16 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
 class SampleSource final {
   public:
     SampleSource() = default;
+    HRESULT Initialize() {
+        if (initialized_) {
+            return S_OK;
+        }
+        RETURN_IF_FAILED(read_video_mode(&mode_));
+        initialized_ = true;
+        return S_OK;
+    }
+
+    [[nodiscard]] const VideoMode& video_mode() const { return mode_; }
     ~SampleSource() {
         if (mapping_ != nullptr) {
             mapping_->Release();
@@ -361,8 +376,11 @@ class SampleSource final {
         }
         *output = nullptr;
         *delivered = false;
+        if (!initialized_) {
+            return MF_E_NOT_INITIALIZED;
+        }
         if (mapping_ == nullptr) {
-            const HRESULT openResult = RingMapping::Open(&mapping_);
+            const HRESULT openResult = RingMapping::Open(mode_, &mapping_);
             if (FAILED(openResult)) {
                 return S_OK;
             }
@@ -425,6 +443,8 @@ class SampleSource final {
     }
 
   private:
+    VideoMode mode_{};
+    bool initialized_ = false;
     RingMapping* mapping_ = nullptr;
     LONG64 lastSequence_ = 0;
 };

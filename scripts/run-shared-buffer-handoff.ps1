@@ -2,6 +2,9 @@
 [CmdletBinding()]
 param(
     [int]$Frames = 2,
+    [int]$Width = 1920,
+    [int]$Height = 1080,
+    [int]$FrameRate = 30,
     [double]$MinimumFps = 0.1,
     [double]$MaximumP95Ms = 1000.0,
     [ValidateSet("ProducerOwned", "SourceOwned")]
@@ -10,13 +13,22 @@ param(
     [string]$ActivationTopology = "InProcess",
     [ValidateSet("None", "H264", "Mjpeg")]
     [string]$CompressedMode = "None",
+    [ValidatePattern("^[a-z0-9-]*$")]
+    [string]$ResultName = "",
     [switch]$KeepInstalled
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-if ($Frames -le 0 -or $MinimumFps -le 0.0 -or $MaximumP95Ms -le 0.0) {
-    throw "Frames and gate values must be positive"
+if ($Frames -le 0 -or $Width -le 0 -or $Width -gt 1920 -or ($Width % 2) -ne 0 -or
+    $Height -le 0 -or $Height -gt 1080 -or ($Height % 2) -ne 0 -or
+    $FrameRate -le 0 -or $FrameRate -gt 60 -or
+    $MinimumFps -le 0.0 -or $MaximumP95Ms -le 0.0) {
+    throw "Frames, mode, and gate values must be valid and positive"
+}
+if ($CompressedMode -ne "None" -and
+    ($Width -ne 1920 -or $Height -ne 1080 -or $FrameRate -ne 30)) {
+    throw "Compressed subtype kill gates support only 1920x1080 at 30fps"
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -82,7 +94,9 @@ $localServer = Join-Path $buildRoot "transport_activation_local_server.exe"
 $codecFixture = Join-Path $buildRoot "transport_codec_fixture.exe"
 $mediaSource = Join-Path $repositoryRoot "build\tsb\Windows-Camera-626f8b19c5f367602f2e89c6b314573d3776c9df\Samples\VirtualCamera\x64\Release\VirtualCameraMediaSource.dll"
 $topologySlug = $ActivationTopology.ToLowerInvariant()
-$resultRoot = if ($CompressedMode -ne "None") {
+$resultRoot = if ($ResultName) {
+    Join-Path $repositoryRoot "build\transport-selection-results\reduced-modes\$ResultName"
+} elseif ($CompressedMode -ne "None") {
     Join-Path $repositoryRoot "build\transport-selection-results\codec-bridge\$($CompressedMode.ToLowerInvariant())"
 } elseif ($ActivationTopology -eq "InProcess") {
     Join-Path $repositoryRoot "build\transport-selection-results\shared-buffer-handoff"
@@ -103,6 +117,7 @@ $ringFile = "C:\Users\Public\SparkFaceTransportSelectionRing.bin"
 $sourceOwnedMode = "C:\Users\Public\SparkFaceTransportSelectionSourceOwned.flag"
 $compressedModeFile = "C:\Users\Public\SparkFaceTransportCompressed.mode"
 $compressedFrame = "C:\Users\Public\SparkFaceTransportCompressed.frame"
+$videoModeFile = "C:\Users\Public\SparkFaceTransportVideoMode.bin"
 $localServerReady = "C:\Users\Public\SparkFaceTransportLocalServer.ready"
 $localServerStop = "C:\Users\Public\SparkFaceTransportLocalServer.stop"
 
@@ -127,7 +142,13 @@ New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue $producerLog, $producerErrorLog,
     $consumerLog, $consumerErrorLog, $localServerLog, $localServerErrorLog,
     $sourceTraceLog, $stateLog, $sourceTrace, $ringFile, $sourceOwnedMode,
-    $compressedModeFile, $compressedFrame, $localServerReady, $localServerStop
+    $compressedModeFile, $compressedFrame, $localServerReady, $localServerStop,
+    $videoModeFile
+$modeBytes = [byte[]]::new(12)
+[BitConverter]::GetBytes([uint32]$Width).CopyTo($modeBytes, 0)
+[BitConverter]::GetBytes([uint32]$Height).CopyTo($modeBytes, 4)
+[BitConverter]::GetBytes([uint32]$FrameRate).CopyTo($modeBytes, 8)
+[IO.File]::WriteAllBytes($videoModeFile, $modeBytes)
 if ($Mode -eq "SourceOwned" -and $CompressedMode -eq "None") {
     Set-Content -LiteralPath $sourceOwnedMode -Value "source-owned"
 }
@@ -247,13 +268,14 @@ try {
     }
     Add-Content -LiteralPath $stateLog -Value "camera-ready"
 
-    $consumerArguments = "--frames $Frames --minimum-fps $MinimumFps --maximum-p95-ms $MaximumP95Ms"
+    $consumerArguments = "--frames $Frames --width $Width --height $Height --frame-rate $FrameRate --minimum-fps $MinimumFps --maximum-p95-ms $MaximumP95Ms"
     if ($CompressedMode -ne "None") {
         $consumerCapture = Start-CapturedProcess $consumer $consumerArguments
         Add-Content -LiteralPath $stateLog -Value "consumer-started pid=$($consumerCapture.Process.Id) compressed=$CompressedMode"
     } elseif ($Mode -eq "ProducerOwned") {
         $producerFrames = $Frames + 300
-        $producerCapture = Start-CapturedProcess $producer "--frames $producerFrames"
+        $producerArguments = "--frames $producerFrames --width $Width --height $Height --frame-rate $FrameRate"
+        $producerCapture = Start-CapturedProcess $producer $producerArguments
         Add-Content -LiteralPath $stateLog -Value "producer-started pid=$($producerCapture.Process.Id) frames=$producerFrames"
         Start-Sleep -Milliseconds 100
         $consumerCapture = Start-CapturedProcess $consumer $consumerArguments
@@ -273,18 +295,20 @@ try {
             throw "Source-owned ring did not appear within 10 seconds"
         }
         $producerFrames = $Frames + 300
-        $producerCapture = Start-CapturedProcess $producer `
-            "--frames $producerFrames --source-owned"
+        $producerArguments = "--frames $producerFrames --width $Width --height $Height --frame-rate $FrameRate --source-owned"
+        $producerCapture = Start-CapturedProcess $producer $producerArguments
         Add-Content -LiteralPath $stateLog -Value "producer-started pid=$($producerCapture.Process.Id) frames=$producerFrames"
     }
 
     $producerResult = $null
     if ($null -ne $producerCapture) {
-        $producerTimeoutMs = [Math]::Max(60000, ($Frames * 50) + 30000)
+        $expectedDurationMs = [Math]::Ceiling($Frames * 1000.0 / $FrameRate)
+        $producerTimeoutMs = [Math]::Max(60000, $expectedDurationMs + 30000)
         $producerResult = Complete-CapturedProcess $producerCapture $producerTimeoutMs `
             $producerLog $producerErrorLog
     }
-    $consumerTimeoutMs = [Math]::Max(30000, ($Frames * 50) + 30000)
+    $expectedDurationMs = [Math]::Ceiling($Frames * 1000.0 / $FrameRate)
+    $consumerTimeoutMs = [Math]::Max(30000, $expectedDurationMs + 30000)
     $consumerResult = Complete-CapturedProcess $consumerCapture $consumerTimeoutMs `
         $consumerLog $consumerErrorLog
 
@@ -351,6 +375,6 @@ try {
     }
     Remove-Item -Force -ErrorAction SilentlyContinue $sourceTrace, $ringFile,
         $sourceOwnedMode, $compressedModeFile, $compressedFrame,
-        $localServerReady, $localServerStop
+        $localServerReady, $localServerStop, $videoModeFile
     Add-Content -LiteralPath $stateLog -Value "cleanup-complete"
 }

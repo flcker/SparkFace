@@ -143,12 +143,49 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 The strict result is retained in `results/compressed-subtypes.json`.
 
+## Reduced-mode product characterization
+
+After the unchanged 1080p30 gate rejected every Wave-1 candidate, the closest
+M2 source-owned design is characterized separately at four explicit product
+fallback modes. These results do not retroactively pass the 1080p30 gate.
+
+| Mode | Minimum fps | Measured fps | Maximum p95 | Measured p95 | Skipped | Outcome |
+|---|---:|---:|---:|---:|---:|---|
+| NV12 1280×720 at 30fps | 29.5 | 28.853 | 33.3ms | 34.106ms | 37 | `NO-GO` |
+| NV12 1920×1080 at 24fps | 23.5 | 23.664 | 41.667ms | 35.686ms | 13 | `NO-GO` |
+| NV12 1920×1080 at 15fps | 14.5 | 14.992 | 66.667ms | 35.547ms | 0 | `PASS` |
+| NV12 1280×720 at 24fps | 23.5 | 23.654 | 41.667ms | 34.576ms | 13 | `NO-GO` |
+
+Each mode restarts Frame Server, then must deliver 1,000 frames with zero
+skipped, duplicate, malformed, or torn markers and no full-frame CPU copy
+before Frame Server. Run all four gates from elevated PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-reduced-mode-characterization.ps1
+```
+
+The runner retains per-mode raw logs under
+`build/transport-selection-results/reduced-modes/` and emits a reviewable JSON
+result at `build/transport-selection-results/reduced-modes.json`. The reviewed
+strict result is retained in `results/reduced-modes.json`.
+
+Only 1080p15 passed all automated gates: 1,000 valid frames, 14.992fps,
+35.547ms p95, zero sequence or marker errors, and no full-frame CPU copy before
+Frame Server. It is a product-fallback candidate, not an accepted product
+constraint. Recovery, real-application, soak, and integrated checks remain
+unrun until that reduced frame-rate constraint is explicitly accepted.
+
 ## Final decision
 
 No tested Wave-1 candidate passed the unchanged 1080p30 transport gates. The
-closest result, M2 source-owned slots, missed both throughput and latency:
-28.819fps and 33.428ms p95 against 29.5fps minimum and 33.3ms maximum. No
-transport primary, technical fallback, or product fallback is selected.
-Recovery, real-application, soak, and integrated face/beauty checks were not
-run because no candidate survived its preceding hard gate. The v1
-implementation plan remains blocked. See `results/summary.json`.
+closest unchanged-gate result, M2 source-owned slots, missed both throughput and
+latency: 28.819fps and 33.428ms p95 against 29.5fps minimum and 33.3ms maximum.
+No transport primary or technical fallback is selected.
+
+Reduced-mode characterization found one automated-gate survivor: M2
+source-owned at NV12 1920×1080 and 15fps. This is not yet an accepted product
+fallback; its 15fps product constraint and the conditional recovery,
+application, soak, and integrated gates require an explicit product decision.
+The v1 implementation plan remains blocked. See `results/summary.json` and
+`results/reduced-modes.json`.
