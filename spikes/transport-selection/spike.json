@@ -53,7 +53,8 @@
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -ActivationTopology LocalServer -Frames 2",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -ActivationTopology Surrogate -Frames 2",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode H264 -Frames 1 -MaximumP95Ms 1000000000000",
-      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode Mjpeg -Frames 1 -MaximumP95Ms 1000000000000"
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode Mjpeg -Frames 1 -MaximumP95Ms 1000000000000",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-reduced-mode-characterization.ps1"
     ],
     "cleanup": [
       "Remove-Item -Recurse -Force build/windows-x64-release-transport-selection,build/transport-selection-results,build/tsb -ErrorAction SilentlyContinue"
@@ -66,10 +67,11 @@
     "correctness": "1000 delivered frames, strict sequence accounting, zero torn or malformed frames",
     "applications": "OBS, Zoom, Microsoft Teams, Discord, DingTalk, and Tencent Meeting separately",
     "recovery": "producer restart, 30-second stall, client reopen, sleep/resume, and privacy recovery",
-    "soak": "10 minutes each in OBS and Tencent Meeting"
+    "soak": "10 minutes each in OBS and Tencent Meeting",
+    "reduced_mode_characterization": "M2 source-owned; 1000 frames per mode; target fps minus 0.5 minimum; one target-frame interval maximum p95; zero sequence or marker errors; zero pre-Frame-Server full-frame CPU copies"
   },
   "verdict": {
     "outcome": "NO-GO",
-    "scope": "No tested Wave-1 user-mode transport passed the unchanged NV12 1920x1080 30fps gates. No transport primary or technical fallback is selected; recovery, application, soak, and integrated checks were not run because no candidate survived its preceding hard gate."
+    "scope": "No tested Wave-1 user-mode transport passed the unchanged NV12 1920x1080 30fps gates, so no transport primary or technical fallback is selected. Reduced-mode characterization found a mode-specific automated-gate candidate at NV12 1920x1080 and 15fps; it is not an accepted product constraint, and its recovery, application, soak, and integrated checks remain unrun."
   }
 }

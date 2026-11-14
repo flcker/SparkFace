@@ -86,6 +86,7 @@ std::int64_t qpc_now() {
 
 struct Options {
     std::uint64_t frames = 1200;
+    VideoMode mode{};
     bool sourceOwned = false;
 };
 
@@ -95,15 +96,25 @@ Options parse_options(int argc, wchar_t** argv) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--frames" && index + 1 < argc) {
             options.frames = std::stoull(argv[++index]);
-            if (options.frames == 0) {
-                throw std::invalid_argument("--frames must be positive");
-            }
+        } else if (argument == L"--width" && index + 1 < argc) {
+            options.mode.width = std::stoul(argv[++index]);
+        } else if (argument == L"--height" && index + 1 < argc) {
+            options.mode.height = std::stoul(argv[++index]);
+        } else if (argument == L"--frame-rate" && index + 1 < argc) {
+            options.mode.frameRate = std::stoul(argv[++index]);
         } else if (argument == L"--source-owned") {
             options.sourceOwned = true;
         } else {
             throw std::invalid_argument(
-                "usage: transport_shared_buffer_producer [--frames N] [--source-owned]");
+                "usage: transport_shared_buffer_producer [--frames N] [--width N] "
+                "[--height N] [--frame-rate N] [--source-owned]");
         }
+    }
+    if (options.frames == 0) {
+        throw std::invalid_argument("--frames must be positive");
+    }
+    if (!valid_video_mode(options.mode)) {
+        throw std::invalid_argument("Video mode is invalid or exceeds 1920x1080 at 60fps");
     }
     return options;
 }
@@ -118,18 +129,19 @@ void encode_word(std::byte* luma, std::uint32_t first_bit,
     }
 }
 
-void generate_frame(std::byte* destination, std::uint64_t sequence,
-                    std::int64_t producer_qpc) {
+void generate_frame(std::byte* destination, const VideoMode& mode,
+                    std::uint64_t sequence, std::int64_t producer_qpc) {
     auto* luma = destination;
-    auto* chroma = destination + static_cast<std::size_t>(Width) * Height;
+    auto* chroma = destination + static_cast<std::size_t>(mode.width) * mode.height;
     const auto phase = static_cast<std::uint32_t>(sequence % 220U);
-    for (std::uint32_t y = 0; y < Height; ++y) {
-        auto* row = luma + static_cast<std::size_t>(y) * Width;
-        for (std::uint32_t x = 0; x < Width; ++x) {
+    for (std::uint32_t y = 0; y < mode.height; ++y) {
+        auto* row = luma + static_cast<std::size_t>(y) * mode.width;
+        for (std::uint32_t x = 0; x < mode.width; ++x) {
             row[x] = static_cast<std::byte>(16U + ((x + y + phase) % 220U));
         }
     }
-    std::fill_n(chroma, FrameBytes - static_cast<std::size_t>(Width) * Height,
+    std::fill_n(chroma,
+                frame_bytes(mode) - static_cast<std::size_t>(mode.width) * mode.height,
                 std::byte{128});
     encode_word(luma, 0, 16, PayloadMagic);
     encode_word(luma, 16, 64, sequence);
@@ -139,7 +151,7 @@ void generate_frame(std::byte* destination, std::uint64_t sequence,
 
 class ProducerRing final {
   public:
-    explicit ProducerRing(bool sourceOwned) {
+    ProducerRing(bool sourceOwned, const VideoMode& mode) : mode_(mode) {
         if (sourceOwned) {
             for (std::uint32_t attempt = 0; attempt < 100; ++attempt) {
                 file_ = Handle(CreateFileW(RingPath, GENERIC_READ | GENERIC_WRITE,
@@ -191,14 +203,18 @@ class ProducerRing final {
             }
             header->magic = Magic;
             header->version = Version;
-            header->width = Width;
-            header->height = Height;
-            header->frameBytes = static_cast<std::uint32_t>(FrameBytes);
+            header->width = mode_.width;
+            header->height = mode_.height;
+            header->frameBytes = static_cast<std::uint32_t>(frame_bytes(mode_));
+            header->frameRate = mode_.frameRate;
             header->slotCount = SlotCount;
             header->ownerMode = 1;
             header->qpcFrequency = frequency.QuadPart;
         } else if (header->magic != Magic || header->version != Version ||
-                   header->ownerMode != 2 || header->frameBytes != FrameBytes) {
+                   header->ownerMode != 2 || header->width != mode_.width ||
+                   header->height != mode_.height ||
+                   header->frameBytes != frame_bytes(mode_) ||
+                   header->frameRate != mode_.frameRate) {
             throw std::runtime_error("source-owned ring layout is invalid");
         }
         header->producerPid = GetCurrentProcessId();
@@ -210,7 +226,7 @@ class ProducerRing final {
         for (std::uint64_t sequence = 1; sequence <= frame_count; ++sequence) {
             const std::int64_t target =
                 start + static_cast<std::int64_t>(
-                            (sequence - 1) * header->qpcFrequency / FrameRate);
+                            (sequence - 1) * header->qpcFrequency / mode_.frameRate);
             while (true) {
                 const std::int64_t remaining = target - qpc_now();
                 if (remaining <= 0) {
@@ -245,7 +261,7 @@ class ProducerRing final {
 
             InterlockedExchange64(&selected->sequence, 0);
             const std::int64_t producer_qpc = qpc_now();
-            generate_frame(slot_payload(selected), sequence, producer_qpc);
+            generate_frame(slot_payload(selected), mode_, sequence, producer_qpc);
             selected->producerQpc = producer_qpc;
             selected->publishedQpc = qpc_now();
             MemoryBarrier();
@@ -259,6 +275,9 @@ class ProducerRing final {
         const double seconds = static_cast<double>(qpc_now() - start) /
                                static_cast<double>(header->qpcFrequency);
         std::cout << std::fixed << std::setprecision(3)
+                  << "producer_width=" << mode_.width << '\n'
+                  << "producer_height=" << mode_.height << '\n'
+                  << "producer_frame_rate=" << mode_.frameRate << '\n'
                   << "producer_frames=" << frame_count << '\n'
                   << "producer_fps="
                   << static_cast<double>(frame_count - 1) / seconds << '\n'
@@ -280,6 +299,7 @@ class ProducerRing final {
     }
 
   private:
+    VideoMode mode_;
     Handle file_;
     Handle mapping_;
     View view_{nullptr};
@@ -291,7 +311,7 @@ class ProducerRing final {
 int wmain(int argc, wchar_t** argv) {
     try {
         const auto options = parse_options(argc, argv);
-        ProducerRing ring(options.sourceOwned);
+        ProducerRing ring(options.sourceOwned, options.mode);
         ring.run(options.frames);
         return 0;
     } catch (const std::exception& error) {

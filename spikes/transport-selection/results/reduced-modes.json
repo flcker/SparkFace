@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "hardware": "Windows 11 Pro build 26300; 13th Gen Intel Core i7-13700H; Intel Iris Xe Graphics; driver 32.0.101.7092",
+  "ownership_mode": "source-owned",
+  "frames_per_mode": 1000,
+  "gate_policy": {
+    "minimum_fps": "target fps minus 0.5",
+    "maximum_frame_age_p95_ms": "one target-frame interval; 33.3ms retained for 30fps",
+    "correctness": "all requested frames delivered; zero skipped, duplicate, or malformed frames",
+    "pre_frame_server_copy": "zero full-frame CPU copies"
+  },
+  "modes": [
+    {
+      "id": "720p30",
+      "format": "NV12",
+      "width": 1280,
+      "height": 720,
+      "target_fps": 30,
+      "delivered_frames": 1000,
+      "minimum_fps": 29.5,
+      "achieved_fps": 28.853,
+      "maximum_frame_age_p95_ms": 33.3,
+      "producer_to_client_frame_age_p50_ms": 18.900,
+      "producer_to_client_frame_age_p95_ms": 34.106,
+      "producer_to_client_frame_age_p99_ms": 35.294,
+      "producer_to_client_frame_age_max_ms": 48.398,
+      "skipped_sequences": 37,
+      "duplicate_sequences": 0,
+      "marker_errors": 0,
+      "full_frame_cpu_copy_before_frame_server": 0,
+      "no_free_slot_count": 0,
+      "outcome": "NO-GO",
+      "failed_gates": [
+        "correctness",
+        "throughput",
+        "latency"
+      ]
+    },
+    {
+      "id": "1080p24",
+      "format": "NV12",
+      "width": 1920,
+      "height": 1080,
+      "target_fps": 24,
+      "delivered_frames": 1000,
+      "minimum_fps": 23.5,
+      "achieved_fps": 23.664,
+      "maximum_frame_age_p95_ms": 41.667,
+      "producer_to_client_frame_age_p50_ms": 31.814,
+      "producer_to_client_frame_age_p95_ms": 35.686,
+      "producer_to_client_frame_age_p99_ms": 50.019,
+      "producer_to_client_frame_age_max_ms": 51.425,
+      "skipped_sequences": 13,
+      "duplicate_sequences": 0,
+      "marker_errors": 0,
+      "full_frame_cpu_copy_before_frame_server": 0,
+      "no_free_slot_count": 0,
+      "outcome": "NO-GO",
+      "failed_gates": [
+        "correctness"
+      ]
+    },
+    {
+      "id": "1080p15",
+      "format": "NV12",
+      "width": 1920,
+      "height": 1080,
+      "target_fps": 15,
+      "delivered_frames": 1000,
+      "minimum_fps": 14.5,
+      "achieved_fps": 14.992,
+      "maximum_frame_age_p95_ms": 66.667,
+      "producer_to_client_frame_age_p50_ms": 32.083,
+      "producer_to_client_frame_age_p95_ms": 35.547,
+      "producer_to_client_frame_age_p99_ms": 50.266,
+      "producer_to_client_frame_age_max_ms": 51.955,
+      "skipped_sequences": 0,
+      "duplicate_sequences": 0,
+      "marker_errors": 0,
+      "full_frame_cpu_copy_before_frame_server": 0,
+      "no_free_slot_count": 0,
+      "outcome": "PASS",
+      "failed_gates": []
+    },
+    {
+      "id": "720p24",
+      "format": "NV12",
+      "width": 1280,
+      "height": 720,
+      "target_fps": 24,
+      "delivered_frames": 1000,
+      "minimum_fps": 23.5,
+      "achieved_fps": 23.654,
+      "maximum_frame_age_p95_ms": 41.667,
+      "producer_to_client_frame_age_p50_ms": 19.074,
+      "producer_to_client_frame_age_p95_ms": 34.576,
+      "producer_to_client_frame_age_p99_ms": 48.983,
+      "producer_to_client_frame_age_max_ms": 50.799,
+      "skipped_sequences": 13,
+      "duplicate_sequences": 0,
+      "marker_errors": 0,
+      "full_frame_cpu_copy_before_frame_server": 0,
+      "no_free_slot_count": 0,
+      "outcome": "NO-GO",
+      "failed_gates": [
+        "correctness"
+      ]
+    }
+  ],
+  "selection": {
+    "automated_gate_candidate": "NV12 1920x1080 at 15fps",
+    "accepted_product_fallback": "none",
+    "conditional_checks": "not-run; product resolution and frame-rate constraints require explicit acceptance before recovery, application, soak, and integrated checks"
+  },
+  "verdict": "Only NV12 1920x1080 at 15fps passed its mode-specific 1,000-frame automated gate. It is a product-fallback candidate, not an accepted product constraint or transport selection."
+}

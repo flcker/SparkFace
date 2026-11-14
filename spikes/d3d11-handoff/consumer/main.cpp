@@ -93,6 +93,9 @@ ComPtr<IMFActivate> find_camera() {
 
 struct Options {
     std::uint64_t frames = 1000;
+    std::uint32_t width = kWidth;
+    std::uint32_t height = kHeight;
+    std::uint32_t frame_rate = kFrameRate;
     double minimum_fps = 29.5;
     double maximum_p95_ms = 33.3;
 };
@@ -103,18 +106,27 @@ Options parse_options(int argc, wchar_t** argv) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--frames" && index + 1 < argc) {
             options.frames = std::stoull(argv[++index]);
+        } else if (argument == L"--width" && index + 1 < argc) {
+            options.width = std::stoul(argv[++index]);
+        } else if (argument == L"--height" && index + 1 < argc) {
+            options.height = std::stoul(argv[++index]);
+        } else if (argument == L"--frame-rate" && index + 1 < argc) {
+            options.frame_rate = std::stoul(argv[++index]);
         } else if (argument == L"--minimum-fps" && index + 1 < argc) {
             options.minimum_fps = std::stod(argv[++index]);
         } else if (argument == L"--maximum-p95-ms" && index + 1 < argc) {
             options.maximum_p95_ms = std::stod(argv[++index]);
         } else {
             throw std::invalid_argument(
-                "usage: d3d11_handoff_consumer [--frames N] [--minimum-fps F] "
-                "[--maximum-p95-ms F]");
+                "usage: d3d11_handoff_consumer [--frames N] [--width N] [--height N] "
+                "[--frame-rate N] [--minimum-fps F] [--maximum-p95-ms F]");
         }
     }
-    if (options.frames == 0 || options.minimum_fps <= 0.0 || options.maximum_p95_ms <= 0.0) {
-        throw std::invalid_argument("Consumer gate values must be positive");
+    if (options.frames == 0 || options.width == 0 || options.height == 0 ||
+        (options.width % 2) != 0 || (options.height % 2) != 0 ||
+        options.frame_rate == 0 || options.minimum_fps <= 0.0 ||
+        options.maximum_p95_ms <= 0.0) {
+        throw std::invalid_argument("Consumer mode and gate values must be positive and even-sized");
     }
     return options;
 }
@@ -165,9 +177,11 @@ int wmain(int argc, wchar_t** argv) {
         check_hresult(MFCreateMediaType(&type), "MFCreateMediaType");
         check_hresult(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video), "Set major type");
         check_hresult(type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12), "Set subtype");
-        check_hresult(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, kWidth, kHeight),
-                      "Set frame size");
-        check_hresult(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, kFrameRate, 1),
+        check_hresult(
+            MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, options.width, options.height),
+            "Set frame size");
+        check_hresult(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE,
+                                          options.frame_rate, 1),
                       "Set frame rate");
         constexpr DWORD stream_index =
             static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
@@ -206,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
             DWORD current = 0;
             check_hresult(buffer->Lock(&bytes, &maximum, &current), "IMFMediaBuffer::Lock");
             const std::int64_t delivered_qpc = qpc_now();
-            if (current < kWidth * kHeight * 3 / 2) {
+            if (current < static_cast<std::uint64_t>(options.width) * options.height * 3 / 2) {
                 ++marker_errors;
                 buffer->Unlock();
                 continue;
@@ -254,6 +268,9 @@ int wmain(int argc, wchar_t** argv) {
         source.Reset();
         check_hresult(activation->ShutdownObject(), "IMFActivate::ShutdownObject");
         std::cout << std::fixed << std::setprecision(3)
+                  << "mf_width=" << options.width << '\n'
+                  << "mf_height=" << options.height << '\n'
+                  << "mf_frame_rate=" << options.frame_rate << '\n'
                   << "mf_frames=" << received << '\n'
                   << "mf_fps_achieved=" << fps << '\n'
                   << "producer_to_client_frame_age_p50_ms=" << p50_ms << '\n'
