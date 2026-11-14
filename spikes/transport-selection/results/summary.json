@@ -95,14 +95,14 @@
     "s1_source_local_render": {
       "outcome": "AUTOMATED_PASS",
       "mode": "NV12 1920x1080 at 30fps",
-      "fps": 30.258,
-      "render_to_client_p95_ms": 12.259,
-      "render_to_client_max_ms": 16.998,
+      "fps": 30.271,
+      "render_to_client_p95_ms": 12.415,
+      "render_to_client_max_ms": 17.947,
       "skipped_sequences": 0,
       "marker_errors": 0,
       "full_frame_cpu_copies_before_frame_server": 0,
       "conditional_evidence": "partial; OBS and Tencent Meeting preview, reconnect, and ten-minute soaks passed",
-      "scope": "source-local minimal shader; full application, recovery, integrated face/beauty, and product-security gates remain incomplete"
+      "scope": "source-local minimal shader; H9 productization passed; full application, recovery, and integrated face/beauty gates remain incomplete"
     }
   },
   "conditional_checks": {
@@ -110,7 +110,7 @@
     "applications": "partial-pass; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 passed preview and reconnect; Zoom, Microsoft Teams, Discord, and DingTalk were not installed",
     "soak": "pass; OBS Studio and Tencent Meeting each completed ten minutes with live source-local conversion progress",
     "integrated_face_beauty": "not-run; S1 exercised a minimal marker shader and Spike C remains NO-GO",
-    "product_security": "not-run; product control, deployment, update, and security model remain unspecified"
+    "product_security": "pass; versioned user-session control, ACL denial, fail-safe mismatch and producer-dead behavior, restart, side-by-side activation, registration restoration, and artifact cleanup passed"
   },
   "selection": {
     "transport_primary": "none",
@@ -120,5 +120,5 @@
     "product_fallback": "none accepted",
     "product_readiness": "blocked"
   },
-  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 source-local render passed the automated 1080p30 gate at 30.258fps and 12.259ms p95, plus the available recovery, OBS, and Tencent Meeting subset, but remains unselected because the complete application, recovery, integrated pipeline, and product-security gates are incomplete. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
+  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 source-local render passed the automated 1080p30 gate at 30.271fps and 12.415ms p95, H9 productization, and the available recovery, OBS, and Tencent Meeting subset, but remains unselected because the complete application, recovery, and integrated pipeline gates are incomplete. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
 }

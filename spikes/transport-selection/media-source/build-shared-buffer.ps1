@@ -99,6 +99,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../codec-bridge/CompressedFrame
 
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/SourceLocalRenderer.h") `
     -Destination (Join-Path $mediaSource "SourceLocalRenderer.h")
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/control_protocol.h") `
+    -Destination (Join-Path $mediaSource "control_protocol.h")
 & $nuget restore (Join-Path $virtualCamera "VirtualCameraSample.sln") `
     -PackagesDirectory (Join-Path $virtualCamera "packages") -NonInteractive
 if ($LASTEXITCODE -ne 0) {

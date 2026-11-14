@@ -25,11 +25,11 @@
     "measurement_build": "final output-view-cache implementation",
     "frames": 1000,
     "valid_frames": 1000,
-    "fps": 30.258,
-    "source_local_render_to_client_p50_ms": 9.295,
-    "source_local_render_to_client_p95_ms": 12.259,
-    "source_local_render_to_client_p99_ms": 13.916,
-    "source_local_render_to_client_max_ms": 16.998,
+    "fps": 30.271,
+    "source_local_render_to_client_p50_ms": 9.525,
+    "source_local_render_to_client_p95_ms": 12.415,
+    "source_local_render_to_client_p99_ms": 13.694,
+    "source_local_render_to_client_max_ms": 17.947,
     "skipped_sequences": 0,
     "duplicate_sequences": 0,
     "malformed_markers": 0,
@@ -81,12 +81,16 @@
       "DingTalk"
     ]
   },
+  "productization": {
+    "status": "PASS",
+    "result": "results/source-local-productization.json",
+    "scope": "versioned user-session control, ACL denial, fail-safe mismatch and producer-dead behavior, producer and Frame Server recovery, side-by-side activation, registration restoration, and artifact cleanup"
+  },
   "remaining_gates": [
     "H5 application coverage for Zoom, Microsoft Teams, Discord, and DingTalk",
     "H6 sleep/resume, privacy-toggle, and logoff/login recovery",
-    "H8 integrated face and beauty pipeline",
-    "H9 product control, deployment, update, and security model"
+    "H8 integrated face and beauty pipeline"
   ],
   "selection": "none",
-  "selection_reason": "S1 passes the automated 1080p30 gate, but required conditional application, recovery, integration, and product-security evidence remains incomplete."
+  "selection_reason": "S1 passes the automated 1080p30 and H9 productization gates, but required application, recovery, and integrated face/beauty evidence remains incomplete."
 }

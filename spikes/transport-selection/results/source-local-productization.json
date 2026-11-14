@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "candidate": "S1 source-local productization (H9)",
+  "measurement_state": "completed",
+  "outcome": "PASS",
+  "contract": {
+    "control_protocol_version": 1,
+    "control_mapping": "Global\\SparkFaceSourceLocalControl-v1",
+    "producer_scope": "interactive user session",
+    "consumer_scope": "Frame Server LocalService media-source host",
+    "fail_safe_effect_value": 0,
+    "scenario_frames": 120,
+    "minimum_fps": 29.5,
+    "maximum_p95_ms": 33.3
+  },
+  "security": {
+    "mapping_acl_restricted_write_denied": true,
+    "mapping_acl_low_integrity_write_denied": true,
+    "mapping_acl_non_admin": true,
+    "mapping_acl_non_admin_write_open": true,
+    "asset_hash_validation": "PASS",
+    "protocol_version_validation": "PASS",
+    "heartbeat_and_producer_liveness_validation": "PASS"
+  },
+  "scenarios": {
+    "normal_v1": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 30.074,
+      "render_to_client_p95_ms": 12.008,
+      "control_revision": 101,
+      "control_value": 20,
+      "control_status": 0,
+      "marker_errors": 0
+    },
+    "protocol_mismatch": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 29.787,
+      "render_to_client_p95_ms": 12.241,
+      "fail_safe_control_status": 5,
+      "marker_errors": 0
+    },
+    "producer_crash_transition": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 30.044,
+      "render_to_client_p95_ms": 8.793,
+      "applied_state_observed": true,
+      "producer_dead_state_observed": true,
+      "fail_safe_control_status": 7,
+      "marker_errors": 0
+    },
+    "producer_recovery": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 30.153,
+      "render_to_client_p95_ms": 12.442,
+      "control_revision": 104,
+      "control_value": 40,
+      "marker_errors": 0
+    },
+    "frame_server_restart": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 30.039,
+      "render_to_client_p95_ms": 12.760,
+      "control_revision": 104,
+      "control_value": 40,
+      "marker_errors": 0
+    },
+    "side_by_side_v2": {
+      "status": "PASS",
+      "frames": 120,
+      "fps": 30.074,
+      "render_to_client_p95_ms": 11.996,
+      "control_revision": 104,
+      "control_value": 40,
+      "marker_errors": 0
+    },
+    "cleanup": {
+      "status": "PASS",
+      "registration_restored": true,
+      "mode_and_control_files_removed": true,
+      "staged_dlls_removed": true
+    }
+  },
+  "final_s1_regression": {
+    "status": "PASS",
+    "frames": 1000,
+    "fps": 30.271,
+    "render_to_client_p50_ms": 9.525,
+    "render_to_client_p95_ms": 12.415,
+    "render_to_client_p99_ms": 13.694,
+    "render_to_client_max_ms": 17.947,
+    "skipped_sequences": 0,
+    "duplicate_sequences": 0,
+    "marker_errors": 0,
+    "full_frame_cpu_copies_before_frame_server": 0
+  },
+  "selection_impact": "H9 product control, fail-safe security, restart, side-by-side update, and cleanup gates pass. S1 remains unselected because H5 application coverage, H6 recovery coverage, and H8 integrated face/beauty evidence remain incomplete."
+}

@@ -247,10 +247,45 @@ The final strict run passed all automated gates:
 
 | Frames | Measured fps | Render-to-client p50 | p95 | p99 | Maximum | Sequence/marker errors | Pre-Frame-Server CPU copies | Outcome |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 1,000 | 30.258 | 9.295ms | 12.259ms | 13.916ms | 16.998ms | 0 | 0 | `PASS` |
+| 1,000 | 30.271 | 9.525ms | 12.415ms | 13.694ms | 17.947ms | 0 | 0 | `PASS` |
 
 The reviewed measurement and conditional-check inventory are retained in
 `results/source-local-render.json`.
+
+## S1 H9 productization gate
+
+The source-local productization runner adds a versioned shared control block
+owned by an interactive-session producer and read by the LocalService media
+source. It validates the fixed source asset before use, rejects protocol or
+asset mismatches to effect value zero, detects producer exit and stale
+heartbeats, and restricts writes to ordinary interactive users while denying
+restricted and low-integrity tokens.
+
+Run the elevated H9 gate with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-source-local-productization.ps1 `
+  -Frames 120 -MinimumFps 29.5 -MaximumP95Ms 33.3
+```
+
+| Scenario | Frames | Measured fps | Render-to-client p95 | Result |
+|---|---:|---:|---:|---|
+| Normal v1 control | 120 | 30.074 | 12.008ms | `PASS` |
+| Protocol mismatch fail-safe | 120 | 29.787 | 12.241ms | `PASS` |
+| Applied-to-producer-dead transition | 120 | 30.044 | 8.793ms | `PASS` |
+| Producer recovery | 120 | 30.153 | 12.442ms | `PASS` |
+| Frame Server restart | 120 | 30.039 | 12.760ms | `PASS` |
+| Side-by-side v2 activation | 120 | 30.074 | 11.996ms | `PASS` |
+
+All scenarios had zero sequence, duplicate, or marker errors and zero
+pre-Frame-Server full-frame CPU copies. The ACL probe denied restricted and
+low-integrity writers while allowing a non-administrator interactive writer.
+The runner restored the retained COM registration and removed mode files,
+control files, and staged DLLs. H9 is `PASS`; the strict 1,000-frame S1
+regression above passed after the productization changes. Detailed evidence is
+retained in `results/source-local-productization.json`.
+
 
 The tested conditional subset also passed:
 
@@ -260,24 +295,23 @@ The tested conditional subset also passed:
 - Tencent Meeting 3.47.2.405 preview, reconnect, and a 10-minute soak.
 
 Zoom, Microsoft Teams, Discord, and DingTalk were not installed on the
-measurement machine. Sleep/resume, privacy-toggle, logoff/login, integrated
-face/beauty, and the product control/deployment/security model were not tested.
-S1 therefore remains an automated-pass candidate rather than a selected
-transport.
+measurement machine. Sleep/resume, privacy-toggle, logoff/login, and integrated
+face/beauty were not tested. H9 product control, fail-safe security, restart,
+side-by-side update, and cleanup gates passed. S1 therefore remains an
+automated-pass candidate rather than a selected transport.
 
 ## Final decision
 
 No tested Wave-1 app-to-source transport passed the unchanged 1080p30 gates.
 Request-credit pacing restored throughput and sequence correctness but failed
 the 33.3ms p95 latency gate. S1 avoids that transport boundary and passes the
-automated 1080p30 gate plus the available recovery, OBS, and Tencent Meeting
-subset. It is not selected because the complete H5 application matrix, H6
-recovery matrix, H8 integrated pipeline, and H9 product security/deployment
-evidence remain incomplete. No transport primary or technical fallback is
-selected.
+automated 1080p30 gate, H9 productization gate, and the available recovery,
+OBS, and Tencent Meeting subset. It is not selected because the complete H5
+application matrix, H6 recovery matrix, and H8 integrated pipeline evidence
+remain incomplete. No transport primary or technical fallback is selected.
 
 Reduced-mode characterization separately retains M2 source-owned NV12
 1920×1080 at 15fps as an unaccepted product-fallback candidate. The v1
 implementation plan remains blocked. See `results/summary.json`,
-`results/source-local-render.json`, `results/reduced-modes.json`, and
-`results/request-paced.json`.
+`results/source-local-render.json`, `results/source-local-productization.json`,
+`results/reduced-modes.json`, and `results/request-paced.json`.

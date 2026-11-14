@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "../../d3d11-handoff/frame_transport.h"
+#include "control_protocol.h"
 
 // clang-format off
 #include <Windows.h>
@@ -18,6 +19,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -98,6 +100,10 @@ struct Options {
     std::uint32_t frameRate = kFrameRate;
     double minimumFps = 29.5;
     double maximumP95Ms = 33.3;
+    std::optional<std::uint32_t> expectedControlRevision;
+    std::optional<std::uint32_t> expectedControlValue;
+    std::optional<std::uint32_t> expectedControlStatus;
+    std::optional<std::uint64_t> transitionAppliedFrames;
 };
 
 Options parse_options(int argc, wchar_t** argv) {
@@ -116,17 +122,41 @@ Options parse_options(int argc, wchar_t** argv) {
             options.minimumFps = std::stod(argv[++index]);
         } else if (argument == L"--maximum-p95-ms" && index + 1 < argc) {
             options.maximumP95Ms = std::stod(argv[++index]);
+        } else if (argument == L"--expect-control-revision" && index + 1 < argc) {
+            options.expectedControlRevision = std::stoul(argv[++index]);
+        } else if (argument == L"--expect-control-value" && index + 1 < argc) {
+            options.expectedControlValue = std::stoul(argv[++index]);
+        } else if (argument == L"--expect-control-status" && index + 1 < argc) {
+            options.expectedControlStatus = std::stoul(argv[++index]);
+        } else if (argument == L"--expect-control-dead-after" && index + 1 < argc) {
+            options.transitionAppliedFrames = std::stoull(argv[++index]);
         } else {
             throw std::invalid_argument(
                 "usage: transport_source_local_consumer [--frames N] [--width N] "
                 "[--height N] [--frame-rate N] [--minimum-fps F] "
-                "[--maximum-p95-ms F]");
+                "[--maximum-p95-ms F] [--expect-control-revision N] "
+                "[--expect-control-value 0..100] [--expect-control-status N] "
+                "[--expect-control-dead-after N]");
         }
     }
     if (options.frames == 0 || options.width == 0 || options.height == 0 ||
         (options.width % 2) != 0 || (options.height % 2) != 0 ||
         options.frameRate == 0 || options.minimumFps <= 0.0 ||
-        options.maximumP95Ms <= 0.0) {
+        options.maximumP95Ms <= 0.0 ||
+        (options.expectedControlValue.has_value() &&
+         !SparkFaceSourceLocalControl::IsEffectValueValid(
+             *options.expectedControlValue)) ||
+        (options.expectedControlStatus.has_value() &&
+         *options.expectedControlStatus > static_cast<std::uint32_t>(
+             SparkFaceSourceLocalControl::Status::ValueInvalid)) ||
+        (options.transitionAppliedFrames.has_value() &&
+         (*options.transitionAppliedFrames == 0 ||
+          *options.transitionAppliedFrames >= options.frames ||
+          !options.expectedControlRevision.has_value() ||
+          !options.expectedControlValue.has_value() ||
+          !options.expectedControlStatus.has_value() ||
+          *options.expectedControlStatus != static_cast<std::uint32_t>(
+              SparkFaceSourceLocalControl::Status::Applied)))) {
         throw std::invalid_argument("Consumer mode and gates must be valid");
     }
     return options;
@@ -136,7 +166,9 @@ std::uint64_t decode_word(const BYTE* bytes, std::uint32_t firstBit,
                           std::uint32_t bitCount) {
     std::uint64_t value = 0;
     for (std::uint32_t bit = 0; bit < bitCount; ++bit) {
-        const std::uint32_t x = (firstBit + bit) * 8 + 4;
+        const std::uint32_t x =
+            (firstBit + bit) * SparkFaceSourceLocalControl::MarkerPixelWidth +
+            SparkFaceSourceLocalControl::MarkerPixelWidth / 2;
         if (bytes[x] >= 128) {
             value |= std::uint64_t{1} << bit;
         }
@@ -201,6 +233,11 @@ int wmain(int argc, wchar_t** argv) {
         std::uint64_t skipped = 0;
         std::uint64_t duplicates = 0;
         std::uint64_t markerErrors = 0;
+        std::uint32_t controlRevision = 0;
+        bool transitionReady = false;
+        bool transitionDead = false;
+        std::uint32_t controlValue = 0;
+        std::uint32_t controlStatus = 0;
         const std::int64_t started = qpc_now();
         while (received < options.frames) {
             DWORD actualStream = 0;
@@ -232,12 +269,20 @@ int wmain(int argc, wchar_t** argv) {
                 continue;
             }
             const auto magic = static_cast<std::uint16_t>(
-                decode_word(bytes, 0, 16));
-            const std::uint64_t sequence = decode_word(bytes, 16, 64);
-            const auto renderQpc = static_cast<std::int64_t>(
-                decode_word(bytes, 80, 64));
-            const auto frameSourcePid = static_cast<std::uint32_t>(
-                decode_word(bytes, 144, 32));
+                decode_word(bytes,
+                            SparkFaceSourceLocalControl::MarkerMagicFirstBit, 16));
+            const std::uint64_t sequence = decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerSequenceFirstBit, 64);
+            const auto renderQpc = static_cast<std::int64_t>(decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerQpcFirstBit, 64));
+            const auto frameSourcePid = static_cast<std::uint32_t>(decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerSourcePidFirstBit, 32));
+            const auto frameControlRevision = static_cast<std::uint32_t>(decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerRevisionFirstBit, 32));
+            const auto frameControlValue = static_cast<std::uint32_t>(decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerEffectValueFirstBit, 32));
+            const auto frameControlStatus = static_cast<std::uint32_t>(decode_word(
+                bytes, SparkFaceSourceLocalControl::MarkerStatusFirstBit, 32));
             buffer->Unlock();
             if (magic != kPayloadMagic || sequence == 0 || renderQpc <= 0 ||
                 renderQpc > deliveredQpc || frameSourcePid == 0 ||
@@ -246,6 +291,33 @@ int wmain(int argc, wchar_t** argv) {
                 continue;
             }
             sourcePid = frameSourcePid;
+            controlRevision = frameControlRevision;
+            controlValue = frameControlValue;
+            controlStatus = frameControlStatus;
+            const std::uint32_t expectedRevision =
+                options.expectedControlRevision.value_or(frameControlRevision);
+            const std::uint32_t expectedValue =
+                options.expectedControlValue.value_or(frameControlValue);
+            const std::uint32_t expectedStatus =
+                options.expectedControlStatus.value_or(frameControlStatus);
+            const bool matchesApplied =
+                frameControlRevision == expectedRevision &&
+                frameControlValue == expectedValue &&
+                frameControlStatus == expectedStatus;
+            const bool matchesDead =
+                frameControlRevision == 0 && frameControlValue == 0 &&
+                frameControlStatus == static_cast<std::uint32_t>(
+                    SparkFaceSourceLocalControl::Status::ProducerDead);
+            if (options.transitionAppliedFrames.has_value()) {
+                if (transitionDead ? !matchesDead : !matchesApplied && !matchesDead) {
+                    ++markerErrors;
+                    continue;
+                }
+                transitionDead = transitionDead || matchesDead;
+            } else if (!matchesApplied) {
+                ++markerErrors;
+                continue;
+            }
             if (lastSequence != 0 && sequence == lastSequence) {
                 ++duplicates;
             } else if (lastSequence != 0 && sequence > lastSequence + 1) {
@@ -253,6 +325,11 @@ int wmain(int argc, wchar_t** argv) {
             } else if (lastSequence != 0 && sequence < lastSequence) {
                 ++markerErrors;
                 continue;
+            }
+            if (!transitionDead && options.transitionAppliedFrames.has_value() &&
+                received + 1 == *options.transitionAppliedFrames) {
+                transitionReady = true;
+                std::cout << "control_transition_ready=1" << std::endl;
             }
             lastSequence = sequence;
             frameAgeMs.push_back(qpc_ms(renderQpc, deliveredQpc));
@@ -269,7 +346,9 @@ int wmain(int argc, wchar_t** argv) {
                           fps <= static_cast<double>(options.frameRate) + 1.0 &&
                           p95Ms <= options.maximumP95Ms &&
                           markerErrors == 0 && duplicates == 0 && skipped == 0 &&
-                          lastSequence == received;
+                          lastSequence == received &&
+                          (!options.transitionAppliedFrames.has_value() ||
+                           (transitionReady && transitionDead));
 
         reader.Reset();
         source.Reset();
@@ -287,6 +366,13 @@ int wmain(int argc, wchar_t** argv) {
                   << "source_local_render_to_client_max_ms=" << maximumMs << '\n'
                   << "source_local_gpu_conversion_count=" << lastSequence << '\n'
                   << "source_local_process_id=" << sourcePid << '\n'
+                  << "source_local_control_revision=" << controlRevision << '\n'
+                  << "source_local_control_transition_applied="
+                  << (transitionReady ? 1 : 0) << '\n'
+                  << "source_local_control_transition_dead="
+                  << (transitionDead ? 1 : 0) << '\n'
+                  << "source_local_control_value=" << controlValue << '\n'
+                  << "source_local_control_status=" << controlStatus << '\n'
                   << "skipped_sequences=" << skipped << '\n'
                   << "duplicate_sequences=" << duplicates << '\n'
                   << "marker_errors=" << markerErrors << '\n'
