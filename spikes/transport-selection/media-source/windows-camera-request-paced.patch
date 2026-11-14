@@ -1,0 +1,23 @@
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+--- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+@@ -198,6 +198,11 @@ namespace winrt::WindowsSample::implementation
+         {
+             return MF_E_NOTACCEPTING;
+         }
++        if (!m_compressedFrameSource.enabled())
++        {
++            RETURN_IF_FAILED(
++                m_sharedBufferSource.RequestFrame(requestEntry.QuadPart));
++        }
+ 
+         const std::size_t tail = (m_pendingHead + m_pendingCount) % PendingRequestCapacity;
+         m_pendingRequests[tail].token = pToken;
+@@ -496,6 +501,7 @@ namespace winrt::WindowsSample::implementation
+     _Requires_lock_held_(m_Lock)
+     void SimpleMediaStream::FlushRequestsRequiresLock()
+     {
++        m_sharedBufferSource.CancelPendingRequests(m_pendingCount);
+         for (auto& request : m_pendingRequests)
+         {
+             request.token.reset();

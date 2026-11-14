@@ -9,6 +9,8 @@ param(
     [double]$MaximumP95Ms = 1000.0,
     [ValidateSet("ProducerOwned", "SourceOwned")]
     [string]$Mode = "ProducerOwned",
+    [ValidateSet("Latest", "RequestCredit")]
+    [string]$PacingMode = "Latest",
     [ValidateSet("InProcess", "LocalServer", "Surrogate")]
     [string]$ActivationTopology = "InProcess",
     [ValidateSet("None", "H264", "Mjpeg")]
@@ -29,6 +31,11 @@ if ($Frames -le 0 -or $Width -le 0 -or $Width -gt 1920 -or ($Width % 2) -ne 0 -o
 if ($CompressedMode -ne "None" -and
     ($Width -ne 1920 -or $Height -ne 1080 -or $FrameRate -ne 30)) {
     throw "Compressed subtype kill gates support only 1920x1080 at 30fps"
+}
+if ($PacingMode -eq "RequestCredit" -and
+    ($Mode -ne "SourceOwned" -or $CompressedMode -ne "None" -or
+     $ActivationTopology -ne "InProcess")) {
+    throw "RequestCredit pacing requires SourceOwned, uncompressed, in-process mode"
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -94,7 +101,9 @@ $localServer = Join-Path $buildRoot "transport_activation_local_server.exe"
 $codecFixture = Join-Path $buildRoot "transport_codec_fixture.exe"
 $mediaSource = Join-Path $repositoryRoot "build\tsb\Windows-Camera-626f8b19c5f367602f2e89c6b314573d3776c9df\Samples\VirtualCamera\x64\Release\VirtualCameraMediaSource.dll"
 $topologySlug = $ActivationTopology.ToLowerInvariant()
-$resultRoot = if ($ResultName) {
+$resultRoot = if ($ResultName -and $PacingMode -eq "RequestCredit") {
+    Join-Path $repositoryRoot "build\transport-selection-results\request-paced\$ResultName"
+} elseif ($ResultName) {
     Join-Path $repositoryRoot "build\transport-selection-results\reduced-modes\$ResultName"
 } elseif ($CompressedMode -ne "None") {
     Join-Path $repositoryRoot "build\transport-selection-results\codec-bridge\$($CompressedMode.ToLowerInvariant())"
@@ -118,6 +127,7 @@ $sourceOwnedMode = "C:\Users\Public\SparkFaceTransportSelectionSourceOwned.flag"
 $compressedModeFile = "C:\Users\Public\SparkFaceTransportCompressed.mode"
 $compressedFrame = "C:\Users\Public\SparkFaceTransportCompressed.frame"
 $videoModeFile = "C:\Users\Public\SparkFaceTransportVideoMode.bin"
+$requestCreditModeFile = "C:\Users\Public\SparkFaceTransportRequestCredit.flag"
 $localServerReady = "C:\Users\Public\SparkFaceTransportLocalServer.ready"
 $localServerStop = "C:\Users\Public\SparkFaceTransportLocalServer.stop"
 
@@ -143,7 +153,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue $producerLog, $producerErrorLog
     $consumerLog, $consumerErrorLog, $localServerLog, $localServerErrorLog,
     $sourceTraceLog, $stateLog, $sourceTrace, $ringFile, $sourceOwnedMode,
     $compressedModeFile, $compressedFrame, $localServerReady, $localServerStop,
-    $videoModeFile
+    $videoModeFile, $requestCreditModeFile
 $modeBytes = [byte[]]::new(12)
 [BitConverter]::GetBytes([uint32]$Width).CopyTo($modeBytes, 0)
 [BitConverter]::GetBytes([uint32]$Height).CopyTo($modeBytes, 4)
@@ -151,6 +161,9 @@ $modeBytes = [byte[]]::new(12)
 [IO.File]::WriteAllBytes($videoModeFile, $modeBytes)
 if ($Mode -eq "SourceOwned" -and $CompressedMode -eq "None") {
     Set-Content -LiteralPath $sourceOwnedMode -Value "source-owned"
+}
+if ($PacingMode -eq "RequestCredit") {
+    Set-Content -LiteralPath $requestCreditModeFile -Value "request-credit"
 }
 if ($CompressedMode -ne "None") {
     $ffmpeg = (Get-Command ffmpeg.exe -ErrorAction Stop).Source
@@ -281,6 +294,17 @@ try {
         $consumerCapture = Start-CapturedProcess $consumer $consumerArguments
         Add-Content -LiteralPath $stateLog -Value "consumer-started pid=$($consumerCapture.Process.Id)"
     } else {
+        $producerFrames = if ($PacingMode -eq "RequestCredit") {
+            $Frames
+        } else {
+            $Frames + 300
+        }
+        $producerArguments = "--frames $producerFrames --width $Width --height $Height --frame-rate $FrameRate --source-owned"
+        if ($PacingMode -eq "RequestCredit") {
+            $producerArguments += " --request-credit"
+            $producerCapture = Start-CapturedProcess $producer $producerArguments
+            Add-Content -LiteralPath $stateLog -Value "producer-started pid=$($producerCapture.Process.Id) frames=$producerFrames"
+        }
         $consumerCapture = Start-CapturedProcess $consumer $consumerArguments
         Add-Content -LiteralPath $stateLog -Value "consumer-started pid=$($consumerCapture.Process.Id)"
         $ringReady = $false
@@ -294,10 +318,10 @@ try {
         if (-not $ringReady) {
             throw "Source-owned ring did not appear within 10 seconds"
         }
-        $producerFrames = $Frames + 300
-        $producerArguments = "--frames $producerFrames --width $Width --height $Height --frame-rate $FrameRate --source-owned"
-        $producerCapture = Start-CapturedProcess $producer $producerArguments
-        Add-Content -LiteralPath $stateLog -Value "producer-started pid=$($producerCapture.Process.Id) frames=$producerFrames"
+        if ($PacingMode -ne "RequestCredit") {
+            $producerCapture = Start-CapturedProcess $producer $producerArguments
+            Add-Content -LiteralPath $stateLog -Value "producer-started pid=$($producerCapture.Process.Id) frames=$producerFrames"
+        }
     }
 
     $producerResult = $null
@@ -375,6 +399,7 @@ try {
     }
     Remove-Item -Force -ErrorAction SilentlyContinue $sourceTrace, $ringFile,
         $sourceOwnedMode, $compressedModeFile, $compressedFrame,
-        $localServerReady, $localServerStop, $videoModeFile
+        $localServerReady, $localServerStop, $videoModeFile,
+        $requestCreditModeFile
     Add-Content -LiteralPath $stateLog -Value "cleanup-complete"
 }

@@ -176,16 +176,61 @@ Frame Server. It is a product-fallback candidate, not an accepted product
 constraint. Recovery, real-application, soak, and integrated checks remain
 unrun until that reduced frame-rate constraint is explicitly accepted.
 
+## Request-credit pacing characterization
+
+The request-credit variant removes the producer's independent timer. Each
+Media Foundation `RequestSample` call publishes one credit with its entry QPC;
+the producer emits the corresponding frame only after that credit arrives.
+Stop and flush explicitly cancel any final unused credit, and the strict result
+requires every published shared buffer to be released.
+
+Frame Server and the interactive producer run in different Windows sessions.
+The probe therefore uses a globally named auto-reset event with a null DACL.
+That permissive event and the public mapped-file path are evidence-only choices,
+not an acceptable product transport or security design.
+
+Run all four 1,000-frame gates from elevated PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-request-paced-characterization.ps1
+```
+
+The runner retains per-mode logs under
+`build/transport-selection-results/request-paced/` and emits the strict result
+at `build/transport-selection-results/request-paced.json`. Recovery,
+real-application, and soak gates run only if a mode passes this automated gate.
+
+All four runs delivered 1,000 valid frames with zero skipped, duplicate, or
+marker-error frames and zero full-frame CPU copies before Frame Server. Each
+run recorded 1,001 requests: 1,000 publications plus one explicit shutdown
+cancellation, with all 1,000 shared buffers released and no slot pressure.
+
+| Mode | Minimum fps | Measured fps | Maximum p95 | Measured p95 | Skipped | Outcome |
+|---|---:|---:|---:|---:|---:|---|
+| NV12 1920×1080 at 30fps | 29.5 | 30.209 | 33.3ms | 48.327ms | 0 | `NO-GO` |
+| NV12 1280×720 at 30fps | 29.5 | 30.235 | 33.3ms | 47.909ms | 0 | `NO-GO` |
+| NV12 1920×1080 at 24fps | 23.5 | 30.243 | 41.667ms | 48.619ms | 0 | `NO-GO` |
+| NV12 1280×720 at 24fps | 23.5 | 30.233 | 41.667ms | 47.968ms | 0 | `NO-GO` |
+
+Request pacing removed the earlier throughput and sequence-skip failures, but
+every mode failed its unchanged frame-age p95 gate. Frame Server continued to
+issue about 30 requests per second for the advertised 24fps modes; the strict
+result retains that observed contract behavior rather than relabeling it as
+24fps pacing. No mode advances to recovery, application, or soak testing. The
+reviewed result is retained in `results/request-paced.json`.
+
 ## Final decision
 
-No tested Wave-1 candidate passed the unchanged 1080p30 transport gates. The
-closest unchanged-gate result, M2 source-owned slots, missed both throughput and
-latency: 28.819fps and 33.428ms p95 against 29.5fps minimum and 33.3ms maximum.
-No transport primary or technical fallback is selected.
+No tested Wave-1 candidate passed the unchanged 1080p30 transport gates.
+Request-credit pacing restored 1080p30 throughput to 30.209fps and eliminated
+sequence skips, but producer-to-client frame-age p95 increased to 48.327ms
+against the unchanged 33.3ms maximum. No transport primary or technical
+fallback is selected.
 
 Reduced-mode characterization found one automated-gate survivor: M2
 source-owned at NV12 1920×1080 and 15fps. This is not yet an accepted product
 fallback; its 15fps product constraint and the conditional recovery,
 application, soak, and integrated gates require an explicit product decision.
-The v1 implementation plan remains blocked. See `results/summary.json` and
-`results/reduced-modes.json`.
+The v1 implementation plan remains blocked. See `results/summary.json`,
+`results/reduced-modes.json`, and `results/request-paced.json`.

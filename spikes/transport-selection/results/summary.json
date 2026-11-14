@@ -66,6 +66,19 @@
       "activation_hresult": "0xC00D36B4",
       "failed_gate": "H1 first frame"
     },
+    "request_credit_pacing": {
+      "outcome": "NO-GO",
+      "full_rate_fps": 30.209,
+      "full_rate_p95_ms": 48.327,
+      "maximum_p95_ms": 33.3,
+      "full_rate_skipped_sequences": 0,
+      "requested_credits": 1001,
+      "published_frames": 1000,
+      "cancelled_credits": 1,
+      "released_buffers": 1000,
+      "failed_gate": "H4 latency",
+      "scope": "all four request-paced modes failed their mode-specific latency gate"
+    },
     "reduced_mode_characterization": {
       "outcome": "PASS_CANDIDATE",
       "passing_mode": "NV12 1920x1080 at 15fps",
@@ -81,10 +94,10 @@
     }
   },
   "conditional_checks": {
-    "recovery": "not-run; 1080p15 product constraint requires explicit acceptance",
-    "applications": "not-run; 1080p15 product constraint requires explicit acceptance",
-    "soak": "not-run; 1080p15 product constraint requires explicit acceptance",
-    "integrated_face_beauty": "not-run; 1080p15 product constraint requires explicit acceptance and Spike C remains NO-GO"
+    "recovery": "not-run; request-credit pacing had no automated-gate survivor, and the 1080p15 product constraint remains unaccepted",
+    "applications": "not-run; request-credit pacing had no automated-gate survivor, and the 1080p15 product constraint remains unaccepted",
+    "soak": "not-run; request-credit pacing had no automated-gate survivor, and the 1080p15 product constraint remains unaccepted",
+    "integrated_face_beauty": "not-run; request-credit pacing had no automated-gate survivor, the 1080p15 product constraint remains unaccepted, and Spike C remains NO-GO"
   },
   "selection": {
     "transport_primary": "none",
@@ -93,5 +106,5 @@
     "product_fallback": "none accepted",
     "product_readiness": "blocked"
   },
-  "verdict": "No tested user-mode MFCreateVirtualCamera replacement transport passed the unchanged NV12 1920x1080 30fps contract. Reduced-mode characterization found that M2 source-owned slots pass the mode-specific automated gate only at NV12 1920x1080 and 15fps. That reduced mode is a product-fallback candidate, not an accepted product constraint or transport selection."
+  "verdict": "No tested user-mode MFCreateVirtualCamera replacement transport passed the unchanged NV12 1920x1080 30fps contract. Request-credit pacing restored 1080p30 throughput and eliminated sequence skips but failed latency at 48.327ms p95. Reduced-mode characterization still identifies M2 source-owned slots at NV12 1920x1080 and 15fps as a mode-specific automated-gate candidate, not an accepted product constraint or transport selection."
 }

@@ -43,6 +43,7 @@ target_compile_definitions(transport_shared_buffer_producer
                            PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(transport_shared_buffer_producer
                        PRIVATE /W4 /WX /wd4324 /permissive- /EHsc)
+target_link_libraries(transport_shared_buffer_producer PRIVATE advapi32)
 target_link_libraries(transport_cross_adapter_probe PRIVATE d3d12 dxgi)
 
 add_executable(transport_activation_local_server

@@ -19,7 +19,8 @@ $patches = @(
     (Join-Path $repositoryRoot "spikes/fallback/media-source/windows-camera-b2.patch"),
     (Join-Path $PSScriptRoot "windows-camera-shared-buffer.patch"),
     (Join-Path $PSScriptRoot "windows-camera-compressed.patch"),
-    (Join-Path $PSScriptRoot "windows-camera-reduced-modes.patch")
+    (Join-Path $PSScriptRoot "windows-camera-reduced-modes.patch"),
+    (Join-Path $PSScriptRoot "windows-camera-request-paced.patch")
 )
 $nuget = Join-Path $repositoryRoot "build/tools/nuget.exe"
 
