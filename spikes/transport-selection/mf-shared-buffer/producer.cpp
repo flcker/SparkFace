@@ -88,6 +88,7 @@ struct Options {
     std::uint64_t frames = 1200;
     VideoMode mode{};
     bool sourceOwned = false;
+    bool requestCredit = false;
 };
 
 Options parse_options(int argc, wchar_t** argv) {
@@ -104,10 +105,12 @@ Options parse_options(int argc, wchar_t** argv) {
             options.mode.frameRate = std::stoul(argv[++index]);
         } else if (argument == L"--source-owned") {
             options.sourceOwned = true;
+        } else if (argument == L"--request-credit") {
+            options.requestCredit = true;
         } else {
             throw std::invalid_argument(
                 "usage: transport_shared_buffer_producer [--frames N] [--width N] "
-                "[--height N] [--frame-rate N] [--source-owned]");
+                "[--height N] [--frame-rate N] [--source-owned] [--request-credit]");
         }
     }
     if (options.frames == 0) {
@@ -115,6 +118,9 @@ Options parse_options(int argc, wchar_t** argv) {
     }
     if (!valid_video_mode(options.mode)) {
         throw std::invalid_argument("Video mode is invalid or exceeds 1920x1080 at 60fps");
+    }
+    if (options.requestCredit && !options.sourceOwned) {
+        throw std::invalid_argument("--request-credit requires --source-owned");
     }
     return options;
 }
@@ -151,7 +157,15 @@ void generate_frame(std::byte* destination, const VideoMode& mode,
 
 class ProducerRing final {
   public:
-    ProducerRing(bool sourceOwned, const VideoMode& mode) : mode_(mode) {
+    ProducerRing(bool sourceOwned, bool requestCredit, const VideoMode& mode)
+        : mode_(mode), pacingMode_(requestCredit ? PacingMode::RequestCredit
+                                                : PacingMode::Latest) {
+        HANDLE demand = create_transport_event(FrameDemandEventName);
+        demandEvent_ = Handle(demand);
+        if (demandEvent_.get() == nullptr) {
+            throw std::runtime_error("CreateEvent frame-demand failed: " +
+                                     std::to_string(GetLastError()));
+        }
         if (sourceOwned) {
             for (std::uint32_t attempt = 0; attempt < 100; ++attempt) {
                 file_ = Handle(CreateFileW(RingPath, GENERIC_READ | GENERIC_WRITE,
@@ -190,8 +204,9 @@ class ProducerRing final {
         if (view_.get() == nullptr) {
             throw std::runtime_error("MapViewOfFile ring failed");
         }
-        event_ = Handle(CreateEventW(nullptr, FALSE, FALSE, FrameReadyEventName));
-        if (event_.get() == nullptr) {
+        frameReadyEvent_ =
+            Handle(CreateEventW(nullptr, FALSE, FALSE, FrameReadyEventName));
+        if (frameReadyEvent_.get() == nullptr) {
             throw std::runtime_error("CreateEvent frame-ready failed");
         }
         auto* header = static_cast<RingHeader*>(view_.get());
@@ -209,78 +224,82 @@ class ProducerRing final {
             header->frameRate = mode_.frameRate;
             header->slotCount = SlotCount;
             header->ownerMode = 1;
+            header->pacingMode = static_cast<std::uint32_t>(pacingMode_);
             header->qpcFrequency = frequency.QuadPart;
-        } else if (header->magic != Magic || header->version != Version ||
-                   header->ownerMode != 2 || header->width != mode_.width ||
-                   header->height != mode_.height ||
-                   header->frameBytes != frame_bytes(mode_) ||
-                   header->frameRate != mode_.frameRate) {
-            throw std::runtime_error("source-owned ring layout is invalid");
+        } else {
+            bool initialized = false;
+            for (std::uint32_t attempt = 0; attempt < 100; ++attempt) {
+                MemoryBarrier();
+                initialized =
+                    header->magic == Magic && header->version == Version &&
+                    header->ownerMode == 2 && header->width == mode_.width &&
+                    header->height == mode_.height &&
+                    header->frameBytes == frame_bytes(mode_) &&
+                    header->frameRate == mode_.frameRate &&
+                    header->pacingMode ==
+                        static_cast<std::uint32_t>(pacingMode_);
+                if (initialized) {
+                    break;
+                }
+                Sleep(100);
+            }
+            if (!initialized) {
+                throw std::runtime_error("source-owned ring layout is invalid");
+            }
         }
         header->producerPid = GetCurrentProcessId();
     }
 
-    void run(std::uint64_t frame_count) {
+    void run(std::uint64_t frameCount) {
         auto* header = static_cast<RingHeader*>(view_.get());
         const std::int64_t start = qpc_now();
-        for (std::uint64_t sequence = 1; sequence <= frame_count; ++sequence) {
-            const std::int64_t target =
-                start + static_cast<std::int64_t>(
-                            (sequence - 1) * header->qpcFrequency / mode_.frameRate);
-            while (true) {
-                const std::int64_t remaining = target - qpc_now();
-                if (remaining <= 0) {
-                    break;
-                }
-                const DWORD sleep_ms = static_cast<DWORD>(
-                    remaining * 1000 / header->qpcFrequency);
-                if (sleep_ms > 1) {
-                    Sleep(sleep_ms - 1);
-                } else {
-                    SwitchToThread();
-                }
-            }
-
-            SlotHeader* selected = nullptr;
-            const std::uint32_t preferred =
-                static_cast<std::uint32_t>(sequence % SlotCount);
-            for (std::uint32_t offset = 0; offset < SlotCount; ++offset) {
-                auto* candidate = slot_header(
-                    view_.get(), (preferred + offset) % SlotCount);
-                if (InterlockedCompareExchange(&candidate->leaseCount, -1, 0) == 0) {
-                    selected = candidate;
-                    break;
-                }
-            }
-            if (selected == nullptr) {
-                InterlockedIncrement64(&header->noFreeSlotCount);
-                --sequence;
-                Sleep(1);
-                continue;
-            }
-
-            InterlockedExchange64(&selected->sequence, 0);
-            const std::int64_t producer_qpc = qpc_now();
-            generate_frame(slot_payload(selected), mode_, sequence, producer_qpc);
-            selected->producerQpc = producer_qpc;
-            selected->publishedQpc = qpc_now();
-            MemoryBarrier();
-            InterlockedExchange64(&selected->sequence,
-                                  static_cast<LONG64>(sequence));
-            InterlockedExchange(&selected->leaseCount, 0);
-            InterlockedExchange64(&header->publishedSequence,
-                                  static_cast<LONG64>(sequence));
-            SetEvent(event_.get());
+        if (pacingMode_ == PacingMode::RequestCredit) {
+            run_request_credit(frameCount);
+        } else {
+            run_latest(frameCount, start);
         }
         const double seconds = static_cast<double>(qpc_now() - start) /
                                static_cast<double>(header->qpcFrequency);
+        const LONG64 totalRequestQpc =
+            atomic_load(&header->requestToPublishTotalQpc);
+        const double requestToPublishAverageMs =
+            pacingMode_ == PacingMode::RequestCredit
+                ? static_cast<double>(totalRequestQpc) * 1000.0 /
+                      static_cast<double>(header->qpcFrequency) /
+                      static_cast<double>(frameCount)
+                : 0.0;
+        const double requestToPublishMaxMs =
+            static_cast<double>(atomic_load(&header->requestToPublishMaxQpc)) *
+            1000.0 / static_cast<double>(header->qpcFrequency);
         std::cout << std::fixed << std::setprecision(3)
                   << "producer_width=" << mode_.width << '\n'
                   << "producer_height=" << mode_.height << '\n'
                   << "producer_frame_rate=" << mode_.frameRate << '\n'
-                  << "producer_frames=" << frame_count << '\n'
+                  << "producer_pacing_mode="
+                  << (pacingMode_ == PacingMode::RequestCredit ? "request-credit"
+                                                               : "latest")
+                  << '\n'
+                  << "producer_frames=" << frameCount << '\n'
                   << "producer_fps="
-                  << static_cast<double>(frame_count - 1) / seconds << '\n'
+                  << static_cast<double>(frameCount - 1) / seconds << '\n'
+                  << "requested_sequence="
+                  << atomic_load(&header->requestedSequence) << '\n'
+                  << "published_sequence="
+                  << atomic_load(&header->publishedSequence) << '\n'
+                  << "consumed_sequence="
+                  << atomic_load(&header->consumedSequence) << '\n'
+                  << "cancelled_through_sequence="
+                  << atomic_load(&header->cancelledThroughSequence) << '\n'
+                  << "credit_signal_count="
+                  << atomic_load(&header->creditSignalCount) << '\n'
+                  << "cancelled_credit_count="
+                  << atomic_load(&header->cancelledCreditCount) << '\n'
+                  << "credit_wait_count="
+                  << atomic_load(&header->creditWaitCount) << '\n'
+                  << "request_to_publish_average_ms="
+                  << requestToPublishAverageMs << '\n'
+                  << "request_to_publish_max_ms=" << requestToPublishMaxMs
+                  << '\n'
                   << "no_free_slot_count="
                   << atomic_load(&header->noFreeSlotCount) << '\n'
                   << "buffer_lock_calls="
@@ -299,11 +318,133 @@ class ProducerRing final {
     }
 
   private:
+    void run_latest(std::uint64_t frameCount, std::int64_t start) {
+        auto* header = static_cast<RingHeader*>(view_.get());
+        for (std::uint64_t sequence = 1; sequence <= frameCount; ++sequence) {
+            const std::int64_t target =
+                start + static_cast<std::int64_t>(
+                            (sequence - 1) * header->qpcFrequency / mode_.frameRate);
+            while (true) {
+                const std::int64_t remaining = target - qpc_now();
+                if (remaining <= 0) {
+                    break;
+                }
+                const DWORD sleepMs = static_cast<DWORD>(
+                    remaining * 1000 / header->qpcFrequency);
+                if (sleepMs > 1) {
+                    Sleep(sleepMs - 1);
+                } else {
+                    SwitchToThread();
+                }
+            }
+            if (!publish(sequence, 0)) {
+                --sequence;
+                Sleep(1);
+            }
+        }
+    }
+
+    void run_request_credit(std::uint64_t frameCount) {
+        auto* header = static_cast<RingHeader*>(view_.get());
+        std::uint64_t produced = 0;
+        LONG64 nextSequence = 1;
+        while (produced < frameCount) {
+            const LONG64 cancelled =
+                atomic_load(&header->cancelledThroughSequence);
+            if (cancelled >= nextSequence) {
+                nextSequence = cancelled + 1;
+                continue;
+            }
+            const LONG64 requested = atomic_load(&header->requestedSequence);
+            const LONG64 consumed = atomic_load(&header->consumedSequence);
+            if (requested < nextSequence || consumed < nextSequence - 1) {
+                InterlockedIncrement64(&header->creditWaitCount);
+                WaitForSingleObject(demandEvent_.get(), 5000);
+                continue;
+            }
+            auto* credit = credit_record(header, nextSequence);
+            if (atomic_load(&credit->sequence) != nextSequence) {
+                SwitchToThread();
+                continue;
+            }
+            if (!publish(static_cast<std::uint64_t>(nextSequence),
+                         credit->requestQpc)) {
+                Sleep(1);
+                continue;
+            }
+            ++produced;
+            ++nextSequence;
+        }
+        while (true) {
+            const LONG64 requested = atomic_load(&header->requestedSequence);
+            const LONG64 consumed = atomic_load(&header->consumedSequence);
+            const LONG64 published = atomic_load(&header->publishedSequence);
+            const LONG64 released = atomic_load(&header->releasedBufferCount);
+            if (requested >= static_cast<LONG64>(frameCount) &&
+                consumed >= requested && released >= published) {
+                break;
+            }
+            InterlockedIncrement64(&header->creditWaitCount);
+            WaitForSingleObject(demandEvent_.get(), 5000);
+        }
+    }
+
+    bool publish(std::uint64_t sequence, std::int64_t requestQpc) {
+        auto* header = static_cast<RingHeader*>(view_.get());
+        SlotHeader* selected = nullptr;
+        const std::uint32_t preferred =
+            static_cast<std::uint32_t>(sequence % SlotCount);
+        for (std::uint32_t offset = 0; offset < SlotCount; ++offset) {
+            auto* candidate = slot_header(
+                view_.get(), (preferred + offset) % SlotCount);
+            if (InterlockedCompareExchange(&candidate->leaseCount, -1, 0) == 0) {
+                selected = candidate;
+                break;
+            }
+        }
+        if (selected == nullptr) {
+            InterlockedIncrement64(&header->noFreeSlotCount);
+            return false;
+        }
+
+        InterlockedExchange64(&selected->sequence, 0);
+        const std::int64_t producerQpc = qpc_now();
+        generate_frame(slot_payload(selected), mode_, sequence, producerQpc);
+        selected->requestQpc = requestQpc;
+        selected->producerQpc = producerQpc;
+        selected->publishedQpc = qpc_now();
+        if (requestQpc > 0) {
+            const LONG64 elapsed = selected->publishedQpc - requestQpc;
+            InterlockedExchangeAdd64(&header->requestToPublishTotalQpc, elapsed);
+            LONG64 maximum = atomic_load(&header->requestToPublishMaxQpc);
+            while (elapsed > maximum) {
+                const LONG64 observed = InterlockedCompareExchange64(
+                    &header->requestToPublishMaxQpc, elapsed, maximum);
+                if (observed == maximum) {
+                    break;
+                }
+                maximum = observed;
+            }
+        }
+        MemoryBarrier();
+        InterlockedExchange64(&selected->sequence,
+                              static_cast<LONG64>(sequence));
+        InterlockedExchange(&selected->leaseCount, 0);
+        InterlockedExchange64(&header->publishedSequence,
+                              static_cast<LONG64>(sequence));
+        if (!SetEvent(frameReadyEvent_.get())) {
+            throw std::runtime_error("SetEvent frame-ready failed");
+        }
+        return true;
+    }
+
     VideoMode mode_;
+    PacingMode pacingMode_;
     Handle file_;
     Handle mapping_;
     View view_{nullptr};
-    Handle event_;
+    Handle frameReadyEvent_;
+    Handle demandEvent_;
 };
 
 } // namespace
@@ -311,7 +452,7 @@ class ProducerRing final {
 int wmain(int argc, wchar_t** argv) {
     try {
         const auto options = parse_options(argc, argv);
-        ProducerRing ring(options.sourceOwned, options.mode);
+        ProducerRing ring(options.sourceOwned, options.requestCredit, options.mode);
         ring.run(options.frames);
         return 0;
     } catch (const std::exception& error) {

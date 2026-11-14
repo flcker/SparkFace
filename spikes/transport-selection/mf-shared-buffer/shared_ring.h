@@ -12,10 +12,11 @@ namespace SparkFaceSharedBuffer {
 inline constexpr std::uint32_t MaxWidth = 1920;
 inline constexpr std::uint32_t MaxHeight = 1080;
 inline constexpr std::uint32_t SlotCount = 8;
+inline constexpr std::uint32_t CreditRecordCount = 32;
 inline constexpr std::size_t MaxFrameBytes =
     static_cast<std::size_t>(MaxWidth) * MaxHeight * 3 / 2;
 inline constexpr std::uint32_t Magic = 0x4D534653U; // "SFSM"
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 3;
 inline constexpr std::uint16_t PayloadMagic = 0xD311U;
 inline constexpr wchar_t RingPath[] =
     L"C:\\Users\\Public\\SparkFaceTransportSelectionRing.bin";
@@ -25,6 +26,28 @@ inline constexpr wchar_t SourceOwnedModePath[] =
     L"C:\\Users\\Public\\SparkFaceTransportSelectionSourceOwned.flag";
 inline constexpr wchar_t VideoModePath[] =
     L"C:\\Users\\Public\\SparkFaceTransportVideoMode.bin";
+inline constexpr wchar_t RequestCreditModePath[] =
+    L"C:\\Users\\Public\\SparkFaceTransportRequestCredit.flag";
+inline constexpr wchar_t FrameDemandEventName[] =
+    L"Global\\SparkFaceTransportFrameDemandV4";
+// Probe-only cross-session event: the null DACL lets Frame Server and the
+// interactive producer share it. Product transport requires a scoped ACL.
+inline HANDLE create_transport_event(const wchar_t* name) {
+    SECURITY_DESCRIPTOR descriptor{};
+    if (!InitializeSecurityDescriptor(&descriptor,
+                                      SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorDacl(&descriptor, TRUE, nullptr, FALSE)) {
+        return nullptr;
+    }
+    SECURITY_ATTRIBUTES attributes{sizeof(attributes), &descriptor, FALSE};
+    return CreateEventW(&attributes, FALSE, FALSE, name);
+}
+
+
+enum class PacingMode : std::uint32_t {
+    Latest = 0,
+    RequestCredit = 1,
+};
 
 struct VideoMode {
     std::uint32_t width = MaxWidth;
@@ -78,6 +101,12 @@ inline HRESULT read_video_mode(VideoMode* output) {
 }
 static_assert(sizeof(VideoMode) == 12);
 
+struct alignas(16) CreditRecord {
+    volatile LONG64 sequence;
+    std::int64_t requestQpc;
+};
+static_assert(sizeof(CreditRecord) == 16);
+
 struct alignas(64) RingHeader {
     std::uint32_t magic;
     std::uint32_t version;
@@ -87,9 +116,18 @@ struct alignas(64) RingHeader {
     std::uint32_t frameRate;
     std::uint32_t slotCount;
     std::uint32_t ownerMode;
+    std::uint32_t pacingMode;
     std::uint32_t producerPid;
     std::int64_t qpcFrequency;
+    volatile LONG64 requestedSequence;
     volatile LONG64 publishedSequence;
+    volatile LONG64 consumedSequence;
+    volatile LONG64 cancelledThroughSequence;
+    volatile LONG64 creditSignalCount;
+    volatile LONG64 cancelledCreditCount;
+    volatile LONG64 creditWaitCount;
+    volatile LONG64 requestToPublishTotalQpc;
+    volatile LONG64 requestToPublishMaxQpc;
     volatile LONG64 noFreeSlotCount;
     volatile LONG64 bufferLockCalls;
     volatile LONG64 bufferLock2DCalls;
@@ -97,14 +135,16 @@ struct alignas(64) RingHeader {
     volatile LONG64 contiguousCopyFromCalls;
     volatile LONG64 copy2DToCalls;
     volatile LONG64 releasedBufferCount;
+    std::array<CreditRecord, CreditRecordCount> creditRecords;
 };
 
 struct alignas(64) SlotHeader {
     volatile LONG64 sequence;
+    std::int64_t requestQpc;
     std::int64_t producerQpc;
     std::int64_t publishedQpc;
     volatile LONG leaseCount;
-    std::array<std::byte, 36> reserved{};
+    std::array<std::byte, 28> reserved{};
 };
 
 inline constexpr std::size_t align_up(std::size_t value, std::size_t alignment) {
@@ -125,6 +165,16 @@ inline const SlotHeader* slot_header(const void* base, std::uint32_t index) {
     return reinterpret_cast<const SlotHeader*>(bytes + HeaderBytes + index * SlotBytes);
 }
 
+inline CreditRecord* credit_record(RingHeader* header, LONG64 sequence) {
+    return &header->creditRecords[static_cast<std::uint64_t>(sequence) %
+                                  CreditRecordCount];
+}
+
+inline const CreditRecord* credit_record(const RingHeader* header,
+                                         LONG64 sequence) {
+    return &header->creditRecords[static_cast<std::uint64_t>(sequence) %
+                                  CreditRecordCount];
+}
 inline std::byte* slot_payload(SlotHeader* slot) {
     return reinterpret_cast<std::byte*>(slot) + sizeof(SlotHeader);
 }

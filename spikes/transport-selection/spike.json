@@ -54,7 +54,8 @@
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -ActivationTopology Surrogate -Frames 2",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode H264 -Frames 1 -MaximumP95Ms 1000000000000",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-shared-buffer-handoff.ps1 -CompressedMode Mjpeg -Frames 1 -MaximumP95Ms 1000000000000",
-      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-reduced-mode-characterization.ps1"
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-reduced-mode-characterization.ps1",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-request-paced-characterization.ps1"
     ],
     "cleanup": [
       "Remove-Item -Recurse -Force build/windows-x64-release-transport-selection,build/transport-selection-results,build/tsb -ErrorAction SilentlyContinue"
@@ -68,10 +69,11 @@
     "applications": "OBS, Zoom, Microsoft Teams, Discord, DingTalk, and Tencent Meeting separately",
     "recovery": "producer restart, 30-second stall, client reopen, sleep/resume, and privacy recovery",
     "soak": "10 minutes each in OBS and Tencent Meeting",
-    "reduced_mode_characterization": "M2 source-owned; 1000 frames per mode; target fps minus 0.5 minimum; one target-frame interval maximum p95; zero sequence or marker errors; zero pre-Frame-Server full-frame CPU copies"
+    "reduced_mode_characterization": "M2 source-owned; 1000 frames per mode; target fps minus 0.5 minimum; one target-frame interval maximum p95; zero sequence or marker errors; zero pre-Frame-Server full-frame CPU copies",
+    "request_credit_characterization": "M2 source-owned request-credit pacing; 1000 target frames per mode; every request published or explicitly cancelled; every published buffer released; mode-specific throughput and p95 gates; zero sequence, marker, slot-pressure, or pre-Frame-Server copy errors"
   },
   "verdict": {
     "outcome": "NO-GO",
-    "scope": "No tested Wave-1 user-mode transport passed the unchanged NV12 1920x1080 30fps gates, so no transport primary or technical fallback is selected. Reduced-mode characterization found a mode-specific automated-gate candidate at NV12 1920x1080 and 15fps; it is not an accepted product constraint, and its recovery, application, soak, and integrated checks remain unrun."
+    "scope": "No tested Wave-1 user-mode transport passed the unchanged NV12 1920x1080 30fps gates, so no transport primary or technical fallback is selected. Request-credit pacing restored throughput and sequence correctness but failed the latency gate in all four measured modes. The existing NV12 1920x1080 at 15fps M2 candidate remains only a mode-specific automated-gate result; it is not an accepted product constraint, and its recovery, application, soak, and integrated checks remain unrun."
   }
 }

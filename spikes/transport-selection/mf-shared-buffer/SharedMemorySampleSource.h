@@ -34,7 +34,8 @@ inline void Trace(const char* message) {
 
 class RingMapping final {
   public:
-    static HRESULT Open(const VideoMode& mode, RingMapping** output) {
+    static HRESULT Open(const VideoMode& mode, PacingMode pacingMode,
+                        RingMapping** output) {
         if (output == nullptr) {
             return E_POINTER;
         }
@@ -91,20 +92,33 @@ class RingMapping final {
             header->frameRate = mode.frameRate;
             header->slotCount = SlotCount;
             header->ownerMode = 2;
+            header->pacingMode = static_cast<std::uint32_t>(pacingMode);
             header->qpcFrequency = frequency.QuadPart;
             Trace("ring-created-by-source");
         }
         if (header->magic != Magic || header->version != Version ||
             header->width != mode.width || header->height != mode.height ||
             header->frameBytes != frame_bytes(mode) ||
-            header->frameRate != mode.frameRate || header->slotCount != SlotCount) {
+            header->frameRate != mode.frameRate ||
+            header->pacingMode != static_cast<std::uint32_t>(pacingMode) ||
+            header->slotCount != SlotCount) {
             UnmapViewOfFile(view);
             CloseHandle(mapping);
             CloseHandle(file);
             return HRESULT_FROM_WIN32(ERROR_REVISION_MISMATCH);
         }
-        auto* state = new (std::nothrow) RingMapping(file, mapping, view);
+        HANDLE demandEvent = create_transport_event(FrameDemandEventName);
+        if (demandEvent == nullptr) {
+            const HRESULT result = HRESULT_FROM_WIN32(GetLastError());
+            UnmapViewOfFile(view);
+            CloseHandle(mapping);
+            CloseHandle(file);
+            return result;
+        }
+        auto* state =
+            new (std::nothrow) RingMapping(file, mapping, view, demandEvent);
         if (state == nullptr) {
+            CloseHandle(demandEvent);
             UnmapViewOfFile(view);
             CloseHandle(mapping);
             CloseHandle(file);
@@ -130,12 +144,17 @@ class RingMapping final {
     }
 
     [[nodiscard]] void* view() const { return view_; }
+    HRESULT SignalDemand() const {
+        return SetEvent(demandEvent_) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+    }
 
   private:
-    RingMapping(HANDLE file, HANDLE mapping, void* view)
-        : file_(file), mapping_(mapping), view_(view) {}
+    RingMapping(HANDLE file, HANDLE mapping, void* view, HANDLE demandEvent)
+        : file_(file), mapping_(mapping), view_(view),
+          demandEvent_(demandEvent) {}
 
     ~RingMapping() {
+        CloseHandle(demandEvent_);
         UnmapViewOfFile(view_);
         CloseHandle(mapping_);
         CloseHandle(file_);
@@ -145,6 +164,7 @@ class RingMapping final {
     HANDLE file_ = INVALID_HANDLE_VALUE;
     HANDLE mapping_ = nullptr;
     void* view_ = nullptr;
+    HANDLE demandEvent_ = nullptr;
 };
 
 class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
@@ -340,6 +360,7 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
     ~SharedMediaBuffer() {
         InterlockedDecrement(&slot_->leaseCount);
         InterlockedIncrement64(&mapping_->header()->releasedBufferCount);
+        mapping_->SignalDemand();
         mapping_->Release();
     }
 
@@ -352,16 +373,6 @@ class SharedMediaBuffer final : public IMFMediaBuffer, public IMF2DBuffer2 {
 class SampleSource final {
   public:
     SampleSource() = default;
-    HRESULT Initialize() {
-        if (initialized_) {
-            return S_OK;
-        }
-        RETURN_IF_FAILED(read_video_mode(&mode_));
-        initialized_ = true;
-        return S_OK;
-    }
-
-    [[nodiscard]] const VideoMode& video_mode() const { return mode_; }
     ~SampleSource() {
         if (mapping_ != nullptr) {
             mapping_->Release();
@@ -369,6 +380,62 @@ class SampleSource final {
     }
     SampleSource(const SampleSource&) = delete;
     SampleSource& operator=(const SampleSource&) = delete;
+
+    HRESULT Initialize() {
+        if (initialized_) {
+            return S_OK;
+        }
+        RETURN_IF_FAILED(read_video_mode(&mode_));
+        pacingMode_ =
+            GetFileAttributesW(RequestCreditModePath) != INVALID_FILE_ATTRIBUTES
+                ? PacingMode::RequestCredit
+                : PacingMode::Latest;
+        initialized_ = true;
+        return S_OK;
+    }
+
+    [[nodiscard]] const VideoMode& video_mode() const { return mode_; }
+
+    HRESULT RequestFrame(std::int64_t requestQpc) {
+        if (!initialized_) {
+            return MF_E_NOT_INITIALIZED;
+        }
+        if (pacingMode_ != PacingMode::RequestCredit) {
+            return S_OK;
+        }
+        RETURN_IF_FAILED(EnsureMapping());
+        auto* header = mapping_->header();
+        const LONG64 requested = atomic_load(&header->requestedSequence);
+        const LONG64 consumed = atomic_load(&header->consumedSequence);
+        if (requested - consumed >= CreditRecordCount) {
+            return MF_E_NOTACCEPTING;
+        }
+        const LONG64 sequence = requested + 1;
+        auto* credit = credit_record(header, sequence);
+        InterlockedExchange64(&credit->sequence, 0);
+        credit->requestQpc = requestQpc;
+        MemoryBarrier();
+        InterlockedExchange64(&credit->sequence, sequence);
+        InterlockedExchange64(&header->requestedSequence, sequence);
+        InterlockedIncrement64(&header->creditSignalCount);
+        return mapping_->SignalDemand();
+    }
+
+    void CancelPendingRequests(std::size_t pendingCount) {
+        if (pacingMode_ != PacingMode::RequestCredit || mapping_ == nullptr ||
+            pendingCount == 0) {
+            return;
+        }
+        auto* header = mapping_->header();
+        const LONG64 requested = atomic_load(&header->requestedSequence);
+        InterlockedExchange64(&header->cancelledThroughSequence, requested);
+        const LONG64 consumed = atomic_load(&header->consumedSequence);
+        const LONG64 cancelled = requested > consumed ? requested - consumed : 0;
+        InterlockedExchangeAdd64(&header->cancelledCreditCount, cancelled);
+        InterlockedExchange64(&header->consumedSequence, requested);
+        lastSequence_ = requested;
+        mapping_->SignalDemand();
+    }
 
     HRESULT CreateLatestSample(IMFSample** output, bool* delivered) {
         if (output == nullptr || delivered == nullptr) {
@@ -379,22 +446,17 @@ class SampleSource final {
         if (!initialized_) {
             return MF_E_NOT_INITIALIZED;
         }
-        if (mapping_ == nullptr) {
-            const HRESULT openResult = RingMapping::Open(mode_, &mapping_);
-            if (FAILED(openResult)) {
-                return S_OK;
-            }
-            char image[MAX_PATH]{};
-            GetModuleFileNameA(nullptr, image, MAX_PATH);
-            char message[MAX_PATH + 64]{};
-            sprintf_s(message, "ring-open pid=%lu image=%s", GetCurrentProcessId(),
-                      image);
-            Trace(message);
+        const HRESULT openResult = EnsureMapping();
+        if (FAILED(openResult)) {
+            return S_OK;
         }
 
         auto* header = mapping_->header();
-        const LONG64 latest = atomic_load(&header->publishedSequence);
-        if (latest <= 0 || latest == lastSequence_) {
+        const LONG64 published = atomic_load(&header->publishedSequence);
+        const LONG64 latest = pacingMode_ == PacingMode::RequestCredit
+                                  ? lastSequence_ + 1
+                                  : published;
+        if (latest <= 0 || published < latest || latest == lastSequence_) {
             return S_OK;
         }
 
@@ -417,6 +479,11 @@ class SampleSource final {
         if (selected == nullptr) {
             return S_OK;
         }
+        if (pacingMode_ == PacingMode::RequestCredit &&
+            selected->requestQpc <= 0) {
+            InterlockedExchange(&selected->leaseCount, 0);
+            return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        }
 
         auto* buffer = new (std::nothrow) SharedMediaBuffer(mapping_, selected);
         if (buffer == nullptr) {
@@ -437,13 +504,36 @@ class SampleSource final {
         }
 
         lastSequence_ = latest;
+        if (pacingMode_ == PacingMode::RequestCredit) {
+            InterlockedExchange64(&header->consumedSequence, latest);
+            result = mapping_->SignalDemand();
+            if (FAILED(result)) {
+                sample->Release();
+                return result;
+            }
+        }
         *output = sample;
         *delivered = true;
         return S_OK;
     }
 
   private:
+    HRESULT EnsureMapping() {
+        if (mapping_ != nullptr) {
+            return S_OK;
+        }
+        RETURN_IF_FAILED(RingMapping::Open(mode_, pacingMode_, &mapping_));
+        char image[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, image, MAX_PATH);
+        char message[MAX_PATH + 64]{};
+        sprintf_s(message, "ring-open pid=%lu image=%s", GetCurrentProcessId(),
+                  image);
+        Trace(message);
+        return S_OK;
+    }
+
     VideoMode mode_{};
+    PacingMode pacingMode_ = PacingMode::Latest;
     bool initialized_ = false;
     RingMapping* mapping_ = nullptr;
     LONG64 lastSequence_ = 0;
