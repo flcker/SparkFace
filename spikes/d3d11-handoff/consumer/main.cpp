@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,7 +31,10 @@ constexpr wchar_t kFriendlyName[] = L"SparkFace Phase0 B2 Camera";
 
 void check_hresult(HRESULT result, const char* operation) {
     if (FAILED(result)) {
-        throw std::runtime_error(std::string(operation) + " failed");
+        std::ostringstream message;
+        message << operation << " failed: 0x" << std::hex << std::uppercase
+                << static_cast<std::uint32_t>(result);
+        throw std::runtime_error(message.str());
     }
 }
 

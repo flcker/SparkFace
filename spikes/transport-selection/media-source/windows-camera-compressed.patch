@@ -1,0 +1,66 @@
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+--- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+@@ -28,6 +28,7 @@ namespace winrt::WindowsSample::implementation
+ 
+         m_dwStreamId = dwStreamId;
+         m_allocatorUsage = allocatorUsage;
++        RETURN_IF_FAILED(m_compressedFrameSource.Initialize());
+ 
+         const uint32_t NUM_MEDIATYPES = 1;
+         wil::unique_cotaskmem_array_ptr<wil::com_ptr_nothrow<IMFMediaType>> mediaTypeList = wilEx::make_unique_cotaskmem_array<wil::com_ptr_nothrow<IMFMediaType>>(NUM_MEDIATYPES);
+@@ -36,7 +37,7 @@ namespace winrt::WindowsSample::implementation
+         wil::com_ptr_nothrow<IMFMediaType> spMediaType;
+         RETURN_IF_FAILED(MFCreateMediaType(&spMediaType));
+         spMediaType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+-        spMediaType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
++        RETURN_IF_FAILED(m_compressedFrameSource.ConfigureMediaType(spMediaType.get()));
+         spMediaType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+         spMediaType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+         MFSetAttributeSize(spMediaType.get(), MF_MT_FRAME_SIZE, NUM_IMAGE_COLS, NUM_IMAGE_ROWS);
+@@ -524,7 +525,14 @@ namespace winrt::WindowsSample::implementation
+         PendingRequest& request = m_pendingRequests[m_pendingHead];
+         IMFSample* rawSample = nullptr;
+         bool delivered = false;
+-        RETURN_IF_FAILED(m_sharedBufferSource.CreateLatestSample(&rawSample, &delivered));
++        if (m_compressedFrameSource.enabled())
++        {
++            RETURN_IF_FAILED(m_compressedFrameSource.CreateSample(&rawSample, &delivered));
++        }
++        else
++        {
++            RETURN_IF_FAILED(m_sharedBufferSource.CreateLatestSample(&rawSample, &delivered));
++        }
+         if (!delivered)
+         {
+             return S_OK;
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.h b/VirtualCameraMediaSource/SimpleMediaStream.h
+--- a/VirtualCameraMediaSource/SimpleMediaStream.h
++++ b/VirtualCameraMediaSource/SimpleMediaStream.h
+@@ -7,6 +7,7 @@
+ 
+ #include <array>
+ #include <cstdint>
++#include "CompressedFrameSource.h"
+ #include "SharedMemorySampleSource.h"
+ 
+ #include "SimpleMediaSource.h"
+@@ -81,6 +82,7 @@ namespace winrt::WindowsSample::implementation
+         wistd::unique_ptr<SimpleFrameGenerator> m_spFrameGenerator;
+         wil::com_ptr_nothrow<IMFMediaType> m_spMediaType;
+         SparkFaceSharedBuffer::SampleSource m_sharedBufferSource;
++        SparkFaceCompressed::FrameSource m_compressedFrameSource;
+ 
+         static constexpr std::size_t PendingRequestCapacity = 16;
+         std::array<PendingRequest, PendingRequestCapacity> m_pendingRequests{};
+diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+--- a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
++++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+@@ -60,6 +60,7 @@
+     <ClInclude Include="AugmentedMediaStream.h" />
+     <ClInclude Include="EventHandler.h" />
+     <ClInclude Include="FallbackFrameSource.h" />
++    <ClInclude Include="CompressedFrameSource.h" />
+     <ClInclude Include="SharedMemorySampleSource.h" />
+     <ClInclude Include="SharedRingProtocol.h" />
+     <ClInclude Include="HWMediaSource.h" />

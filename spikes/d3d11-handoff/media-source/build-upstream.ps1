@@ -49,6 +49,15 @@ tar.exe -xf $archive -C $WorkRoot
 if ($LASTEXITCODE -ne 0) {
     throw "tar extraction failed with exit code $LASTEXITCODE"
 }
+$normalizedPatchRoot = Join-Path $WorkRoot "normalized-patches"
+New-Item -ItemType Directory -Path $normalizedPatchRoot | Out-Null
+$normalizedPatches = foreach ($patch in $patches) {
+    $normalizedPatch = Join-Path $normalizedPatchRoot ([IO.Path]::GetFileName($patch))
+    $patchText = [IO.File]::ReadAllText($patch).Replace("`r`n", "`n")
+    [IO.File]::WriteAllText($normalizedPatch, $patchText, [Text.UTF8Encoding]::new($false))
+    $normalizedPatch
+}
+
 
 $previousCeiling = $env:GIT_CEILING_DIRECTORIES
 $applyExit = 0
@@ -56,7 +65,7 @@ try {
     $env:GIT_CEILING_DIRECTORIES = $WorkRoot
     Push-Location $virtualCamera
     try {
-        foreach ($patch in $patches) {
+        foreach ($patch in $normalizedPatches) {
             git apply --whitespace=nowarn --verbose $patch
             if ($LASTEXITCODE -ne 0) {
                 $applyExit = $LASTEXITCODE

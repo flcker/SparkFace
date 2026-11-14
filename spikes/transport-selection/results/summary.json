@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "outcome": "NO-GO",
+  "product_gate": {
+    "format": "NV12 1920x1080 at 30fps",
+    "minimum_fps": 29.5,
+    "maximum_producer_to_client_frame_age_p95_ms": 33.3,
+    "standard_camera": true,
+    "active_consumers": 1
+  },
+  "candidates": {
+    "g1_source_luid": {
+      "outcome": "NO-GO",
+      "delivered_frames": 1000,
+      "fps": 30.093,
+      "producer_to_client_frame_age_p95_ms": 46.001,
+      "failed_gate": "H4 latency"
+    },
+    "g2_cross_adapter_texture": {
+      "outcome": "NO-GO",
+      "create_hresult": "0x80070057",
+      "cross_node_sharing_tier": 0,
+      "failed_gate": "Stage-0 capability"
+    },
+    "g3_cross_adapter_buffer": {
+      "outcome": "NO-GO",
+      "create_hresult": "0x80070057",
+      "cross_node_sharing_tier": 0,
+      "failed_gate": "Stage-0 capability"
+    },
+    "m1_shared_media_buffer": {
+      "outcome": "PASS_FIRST_FRAME",
+      "delivered_frames": 2,
+      "full_frame_cpu_copy_before_frame_server": 0
+    },
+    "m2_source_owned_slots": {
+      "outcome": "NO-GO",
+      "producer_owned_p95_ms": 33.569,
+      "source_owned_p95_ms": 33.428,
+      "maximum_p95_ms": 33.3,
+      "failed_gate": "H3 throughput and H4 latency"
+    },
+    "a0_in_process": {
+      "outcome": "NO-GO",
+      "detail": "Measured M2 baseline remained below the H3 throughput gate and above the H4 latency gate."
+    },
+    "a1_local_server": {
+      "outcome": "NO-GO",
+      "activation_hresult": "0x80040154",
+      "failed_gate": "H1 first frame"
+    },
+    "a2_surrogate": {
+      "outcome": "NO-GO",
+      "expected_image": "dllhost.exe",
+      "observed_image": "svchost.exe",
+      "failed_gate": "H0 topology contract"
+    },
+    "m7_h264_subtype": {
+      "outcome": "NO-GO",
+      "activation_hresult": "0xC00D36B4",
+      "failed_gate": "H1 first frame"
+    },
+    "m8_mjpeg_subtype": {
+      "outcome": "NO-GO",
+      "activation_hresult": "0xC00D36B4",
+      "failed_gate": "H1 first frame"
+    }
+  },
+  "conditional_checks": {
+    "recovery": "not-run; no candidate passed the automated transport gates",
+    "applications": "not-run; no candidate passed the automated transport gates",
+    "soak": "not-run; no candidate passed the automated transport gates",
+    "integrated_face_beauty": "not-run; no transport candidate survived and Spike C remains NO-GO"
+  },
+  "selection": {
+    "transport_primary": "none",
+    "technical_fallback": "none",
+    "product_fallback": "none accepted",
+    "product_readiness": "blocked"
+  },
+  "verdict": "No tested user-mode MFCreateVirtualCamera replacement transport passed the unchanged NV12 1920x1080 30fps contract. The closest result, M2 source-owned shared slots, delivered 1000 valid frames without a pre-Frame-Server full-frame CPU copy but measured 33.428ms p95 against the strict 33.3ms limit. No primary or technical fallback is selected."
+}

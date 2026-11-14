@@ -1,0 +1,86 @@
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.cpp b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+--- a/VirtualCameraMediaSource/SimpleMediaStream.cpp
++++ b/VirtualCameraMediaSource/SimpleMediaStream.cpp
+@@ -408,7 +408,7 @@ namespace winrt::WindowsSample::implementation
+         }
+ 
+         m_frameReadyEvent = CreateEventW(
+-            nullptr, FALSE, FALSE, SparkFaceFallback::FrameReadyEventName);
++            nullptr, FALSE, FALSE, SparkFaceSharedBuffer::FrameReadyEventName);
+         m_deadlineTimer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
+         if (m_frameReadyEvent == nullptr || m_deadlineTimer == nullptr)
+         {
+@@ -522,38 +522,15 @@ namespace winrt::WindowsSample::implementation
+         }
+ 
+         PendingRequest& request = m_pendingRequests[m_pendingHead];
+-        wil::com_ptr_nothrow<IMFSample> sample;
+-        wil::com_ptr_nothrow<IMFMediaBuffer> outputBuffer;
+-        wil::com_ptr_nothrow<IMF2DBuffer2> buffer2D;
+-        RETURN_IF_FAILED(m_spSampleAllocator->AllocateSample(&sample));
+-        RETURN_IF_FAILED(sample->GetBufferByIndex(0, &outputBuffer));
+-        RETURN_IF_FAILED(outputBuffer->QueryInterface(IID_PPV_ARGS(&buffer2D)));
+-
+-        LONG pitch = 0;
+-        BYTE* bufferStart = nullptr;
+-        DWORD bufferLength = 0;
+-        BYTE* buffer = nullptr;
+-        RETURN_IF_FAILED(buffer2D->Lock2DSize(
+-            MF2DBuffer_LockFlags_Write, &buffer, &pitch, &bufferStart, &bufferLength));
+-
++        IMFSample* rawSample = nullptr;
+         bool delivered = false;
+-        HRESULT result = m_spFrameGenerator->CreateFrame(
+-            buffer, bufferLength, pitch, m_rgbMask, request.requestEntryQpc,
+-            deadlineWake, &delivered);
+-        if (SUCCEEDED(result) && delivered)
+-        {
+-            m_spFrameGenerator->FinalizeSamplePayload(buffer, bufferLength);
+-        }
+-        const HRESULT unlockResult = buffer2D->Unlock2D();
+-        if (FAILED(result))
+-        {
+-            return result;
+-        }
+-        RETURN_IF_FAILED(unlockResult);
++        RETURN_IF_FAILED(m_sharedBufferSource.CreateLatestSample(&rawSample, &delivered));
+         if (!delivered)
+         {
+             return S_OK;
+         }
++        wil::com_ptr_nothrow<IMFSample> sample;
++        sample.attach(rawSample);
+ 
+         RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
+         RETURN_IF_FAILED(sample->SetSampleDuration(333333));
+diff --git a/VirtualCameraMediaSource/SimpleMediaStream.h b/VirtualCameraMediaSource/SimpleMediaStream.h
+--- a/VirtualCameraMediaSource/SimpleMediaStream.h
++++ b/VirtualCameraMediaSource/SimpleMediaStream.h
+@@ -7,6 +7,7 @@
+ 
+ #include <array>
+ #include <cstdint>
++#include "SharedMemorySampleSource.h"
+ 
+ #include "SimpleMediaSource.h"
+ #include "VirtualCameraMediaSource.h"
+@@ -80,6 +81,7 @@ namespace winrt::WindowsSample::implementation
+         wil::com_ptr_nothrow<IMFVideoSampleAllocator> m_spSampleAllocator;
+         wistd::unique_ptr<SimpleFrameGenerator> m_spFrameGenerator;
+         wil::com_ptr_nothrow<IMFMediaType> m_spMediaType;
++        SparkFaceSharedBuffer::SampleSource m_sharedBufferSource;
+ 
+         static constexpr std::size_t PendingRequestCapacity = 16;
+         std::array<PendingRequest, PendingRequestCapacity> m_pendingRequests{};
+diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+--- a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
++++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
+@@ -60,6 +60,8 @@
+     <ClInclude Include="AugmentedMediaStream.h" />
+     <ClInclude Include="EventHandler.h" />
+     <ClInclude Include="FallbackFrameSource.h" />
++    <ClInclude Include="SharedMemorySampleSource.h" />
++    <ClInclude Include="SharedRingProtocol.h" />
+     <ClInclude Include="HWMediaSource.h" />
+     <ClInclude Include="HWMediaStream.h" />
+     <ClInclude Include="pch.h" />
