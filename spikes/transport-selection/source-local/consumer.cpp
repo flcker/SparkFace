@@ -245,6 +245,8 @@ int wmain(int argc, wchar_t** argv) {
         std::uint64_t controlMarkerErrors = 0;
         std::uint64_t orderMarkerErrors = 0;
         std::uint64_t physicalContentErrors = 0;
+        std::uint32_t minimumPhysicalLumaRange = 255;
+        std::uint32_t maximumPhysicalLumaRange = 0;
         std::uint32_t controlRevision = 0;
         bool transitionReady = false;
         bool transitionDead = false;
@@ -316,7 +318,16 @@ int wmain(int argc, wchar_t** argv) {
                         maximumLuma = std::max(maximumLuma, value);
                     }
                 }
-                if (maximumLuma - minimumLuma < 8) {
+                const std::uint32_t lumaRange = maximumLuma - minimumLuma;
+                minimumPhysicalLumaRange =
+                    lumaRange < minimumPhysicalLumaRange
+                        ? lumaRange
+                        : minimumPhysicalLumaRange;
+                maximumPhysicalLumaRange =
+                    lumaRange > maximumPhysicalLumaRange
+                        ? lumaRange
+                        : maximumPhysicalLumaRange;
+                if (lumaRange == 0) {
                     ++physicalContentErrors;
                 }
             }
@@ -436,6 +447,12 @@ int wmain(int argc, wchar_t** argv) {
                   << "control_marker_errors=" << controlMarkerErrors << '\n'
                   << "order_marker_errors=" << orderMarkerErrors << '\n'
                   << "physical_content_errors=" << physicalContentErrors << '\n'
+                  << "physical_luma_range_min="
+                  << (options.expectPhysicalCamera ? minimumPhysicalLumaRange : 0)
+                  << '\n'
+                  << "physical_luma_range_max="
+                  << (options.expectPhysicalCamera ? maximumPhysicalLumaRange : 0)
+                  << '\n'
                   << "full_frame_cpu_copy_before_frame_server=0\n"
                   << (pass ? "SOURCE_LOCAL_GATE_PASS\n"
                            : "SOURCE_LOCAL_GATE_FAIL\n");

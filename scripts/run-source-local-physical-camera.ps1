@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [ValidateRange(1, 1000)]
-    [int]$Frames = 2,
+    [int]$Frames = 1000,
     [ValidateRange(0.1, 120.0)]
     [double]$MinimumFps = 29.5,
     [ValidateRange(0.1, 120.0)]
@@ -100,28 +100,54 @@ function Invoke-PhysicalConsumer([string]$Name, [int]$FrameCount) {
     $process = Start-Process -FilePath $consumer -NoNewWindow -PassThru `
         -ArgumentList $arguments -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr
-    $timedOut = -not $process.WaitForExit(45000)
-    if ($timedOut) {
+    $timeout = [Math]::Max(150000, [int](($FrameCount / 10.0 + 30.0) * 1000.0))
+    if (-not $process.WaitForExit($timeout)) {
         Stop-Process -Id $process.Id -Force
         $process.WaitForExit()
-    } else {
-        $process.WaitForExit()
+        throw "Physical-camera gate watchdog expired"
     }
-    $exitCode = $process.ExitCode
+    $process.WaitForExit()
     $output = Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue
     $errorOutput = Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue
-    $serviceException = -not [string]::IsNullOrWhiteSpace($errorOutput) -and
-        $errorOutput -match "(?m)^SOURCE_LOCAL_CONSUMER_ERROR: IMFSourceReader::ReadSample failed: 0x80070428`r?$"
-    $strictGateFailed = -not [string]::IsNullOrWhiteSpace($output) -and
-        $output -match "(?m)^SOURCE_LOCAL_GATE_FAIL`r?$"
-    if (-not $timedOut -and -not $serviceException -and -not $strictGateFailed) {
-        throw "Physical-camera kill gate did not reproduce a known failure: exit_code=$exitCode stderr=$errorOutput stdout=$output"
+    if (-not [string]::IsNullOrWhiteSpace($errorOutput)) {
+        throw "Physical-camera gate reported stderr: stderr=$errorOutput stdout=$output"
     }
-    $reason = if ($timedOut) { "watchdog" } elseif ($serviceException) {
-        "frame-server-0x80070428"
-    } else { "strict-gate" }
+    foreach ($pattern in @(
+        "(?m)^source_local_frames=$FrameCount`r?$",
+        "(?m)^source_local_gpu_conversion_count=$FrameCount`r?$",
+        "(?m)^skipped_sequences=0`r?$",
+        "(?m)^duplicate_sequences=0`r?$",
+        "(?m)^marker_errors=0`r?$",
+        "(?m)^payload_marker_errors=0`r?$",
+        "(?m)^control_marker_errors=0`r?$",
+        "(?m)^order_marker_errors=0`r?$",
+        "(?m)^physical_content_errors=0`r?$",
+        "(?m)^physical_luma_range_min=[1-9][0-9]*`r?$",
+        "(?m)^full_frame_cpu_copy_before_frame_server=0`r?$",
+        "(?m)^SOURCE_LOCAL_GATE_FAIL`r?$"
+    )) {
+        if ($output -notmatch $pattern) {
+            throw "Physical-camera gate did not match $pattern`: $output"
+        }
+    }
+    if ($output -notmatch "(?m)^source_local_fps_achieved=([0-9.]+)`r?$" -or
+        $output -notmatch "(?m)^source_local_capture_to_client_p95_ms=([0-9.]+)`r?$") {
+        throw "Physical-camera gate omitted throughput or latency metrics: $output"
+    }
+    $fpsMatch = [regex]::Match($output, "(?m)^source_local_fps_achieved=([0-9.]+)`r?$")
+    $p95Match = [regex]::Match($output, "(?m)^source_local_capture_to_client_p95_ms=([0-9.]+)`r?$")
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $fps = [double]::Parse($fpsMatch.Groups[1].Value, $culture)
+    $p95 = [double]::Parse($p95Match.Groups[1].Value, $culture)
+    $failedGates = @()
+    if ($fps -lt $MinimumFps) { $failedGates += "throughput" }
+    if ($p95 -gt $MaximumP95Ms) { $failedGates += "latency" }
+    if ($failedGates.Count -eq 0) {
+        throw "Physical-camera strict gate reported failure without failing throughput or latency: $output"
+    }
+    $reason = ($failedGates -join "-") + "-gate"
     Add-Content -LiteralPath $stateLog -Value `
-        "scenario=$Name frames=$FrameCount result=no-go reason=$reason"
+        "scenario=$Name frames=$FrameCount result=no-go reason=$reason fps=$fps p95_ms=$p95"
     Write-Output "physical_camera_no_go_reason=$reason"
 }
 
@@ -208,7 +234,7 @@ try {
     Assert-CameraReady
 
     if ($Frames -lt 2) {
-        throw "H8A NO-GO reproduction requires at least two requested frames"
+        throw "H8A gate requires at least two requested frames"
     }
     Invoke-PhysicalConsumer "recursive-physical-capture" $Frames
 
@@ -219,7 +245,7 @@ try {
     foreach ($pattern in @(
         "(?m)^physical_camera_initialize_hresult=0x00000000`r?$",
         "(?m)^physical_camera_protocol=2 symbolic_link_hash=[0-9a-fA-F]{8} adapter_luid=[0-9a-fA-F]{8}:[0-9a-fA-F]{8}`r?$",
-        "(?m)^source_local_gpu_conversion_count=[1-9][0-9]*`r?$"
+        "(?m)^source_local_gpu_conversion_count=$Frames`r?$"
     )) {
         if ($trace -notmatch $pattern) {
             throw "Physical-camera source trace did not match $pattern"

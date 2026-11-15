@@ -526,8 +526,12 @@ int wmain(int argc, wchar_t** argv) {
                        : 2;
         }
 
+        if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL)) {
+            fail("SetThreadPriority heartbeat");
+        }
         const bool mismatch = options.mode == Options::Mode::Mismatch;
         const ULONGLONG started = GetTickCount64();
+        bool firstPublication = true;
         do {
             Snapshot snapshot{};
             snapshot.revision = options.revision;
@@ -545,13 +549,18 @@ int wmain(int argc, wchar_t** argv) {
                 }
             }
             Publish(view.value, snapshot, mismatch);
-            std::cout << "control_publish_revision=" << snapshot.revision << '\n'
-                      << "control_publish_value=" << snapshot.effectValue << '\n'
-                      << "control_physical_camera="
-                      << (options.physicalCamera ? 1 : 0) << '\n'
-                      << "control_protocol_version=" << Version << '\n'
-                      << "control_protocol_mismatch=" << (mismatch ? 1 : 0)
-                      << std::endl;
+            if (firstPublication) {
+                std::cout << "control_publish_revision=" << snapshot.revision
+                          << '\n'
+                          << "control_publish_value=" << snapshot.effectValue
+                          << '\n'
+                          << "control_physical_camera="
+                          << (options.physicalCamera ? 1 : 0) << '\n'
+                          << "control_protocol_version=" << Version << '\n'
+                          << "control_protocol_mismatch=" << (mismatch ? 1 : 0)
+                          << std::endl;
+                firstPublication = false;
+            }
             Sleep(options.heartbeatMilliseconds);
         } while (options.holdMilliseconds == 0 ||
                  GetTickCount64() - started < options.holdMilliseconds);

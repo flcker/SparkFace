@@ -102,34 +102,36 @@
       "marker_errors": 0,
       "full_frame_cpu_copies_before_frame_server": 0,
       "conditional_evidence": "partial; OBS and Tencent Meeting preview, reconnect, and ten-minute soaks passed",
-      "scope": "source-local minimal shader; H9 productization passed; H8A physical-camera capture is NO-GO"
+      "scope": "source-local minimal shader; H9 productization passed; H8A physical-camera capture is functionally stable but remains NO-GO on throughput and latency"
     },
     "h8a_source_local_physical_camera": {
       "outcome": "NO-GO",
       "mode": "Integrated Camera to allocator-owned NV12 1920x1080 at 30fps",
-      "requested_frames": 120,
-      "first_gpu_conversion_observed": true,
-      "latest_run_result": "45-second watchdog after DXGI_ERROR_DEVICE_REMOVED and physical-read timeouts",
-      "alternate_observed_consumer_error": "0x80070428",
-      "diagnostic_two_frame_fps": 2.391,
-      "diagnostic_two_frame_physical_content_errors": 2,
-      "scope": "kill gate failed; recovery, application, and soak checks not run"
+      "requested_frames": 1000,
+      "fps": 29.327,
+      "capture_to_client_p95_ms": 50.167,
+      "skipped_sequences": 0,
+      "marker_errors": 0,
+      "physical_content_errors": 0,
+      "full_frame_cpu_copies_before_frame_server": 0,
+      "rca_result": "standalone, capture-only, copy-only, and full stages completed without device removal, Frame Server exception, or watchdog",
+      "scope": "throughput and latency kill gates failed; recovery, application, and soak checks not run"
     }
   },
   "conditional_checks": {
     "recovery": "partial-pass; Frame Server restart, 30-second closed interval, and client reopen passed; sleep/resume, privacy-toggle, and logoff/login were not run",
     "applications": "partial-pass; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 passed preview and reconnect; Zoom, Microsoft Teams, Discord, and DingTalk were not installed",
     "soak": "pass; OBS Studio and Tencent Meeting each completed ten minutes with live source-local conversion progress",
-    "integrated_face_beauty": "NO-GO; H8A source-local physical-camera capture stalled after the first GPU conversion or surfaced Frame Server service exception 0x80070428; face/beauty integration was not run",
+    "integrated_face_beauty": "not-run; corrected H8A physical capture is stable but failed the 29.5fps and 33.3ms p95 gates before face/beauty integration",
     "product_security": "pass; versioned user-session control, ACL denial, fail-safe mismatch and producer-dead behavior, restart, side-by-side activation, registration restoration, and artifact cleanup passed"
   },
   "selection": {
     "transport_primary": "none",
     "technical_fallback": "none",
-    "source_local_candidate": "S1 deterministic render passed, but H8A physical-camera capture is NO-GO",
+    "source_local_candidate": "S1 deterministic render passed; H8A physical capture is stable but remains NO-GO at 29.327fps and 50.167ms p95",
     "product_fallback_candidate": "NV12 1920x1080 at 15fps via M2 source-owned slots",
     "product_fallback": "none accepted",
     "product_readiness": "blocked"
   },
-  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 deterministic source-local rendering passed the automated 1080p30 gate, H9 protocol-v2 productization, and the available recovery, OBS, and Tencent Meeting subset, but H8A proved that recursive physical-camera capture in the Frame Server host is not sustainable. The source-adapter handoff previously failed at 46.001ms p95. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
+  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 deterministic source-local rendering passed the automated 1080p30 gate, H9 protocol-v2 productization, and the available recovery, OBS, and Tencent Meeting subset. Corrected H8A evidence proves stable 1,000-frame physical capture and allocator-owned GPU conversion, but the integrated path reached only 29.327fps and 50.167ms p95. The source-adapter handoff previously failed at 46.001ms p95. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
 }

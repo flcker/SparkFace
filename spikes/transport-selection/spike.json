@@ -58,7 +58,8 @@
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-request-paced-characterization.ps1",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-source-local-render.ps1 -Frames 1000 -MinimumFps 29.5 -MaximumP95Ms 33.3",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-source-local-productization.ps1 -Frames 120 -MinimumFps 29.5 -MaximumP95Ms 33.3",
-      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-source-local-physical-camera.ps1 -Frames 120 -MinimumFps 29.5 -MaximumP95Ms 33.3"
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-source-local-physical-camera.ps1 -Frames 1000 -MinimumFps 29.5 -MaximumP95Ms 33.3",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-source-local-physical-camera-rca.ps1 -Frames 1000 -MinimumFps 29.5 -MaximumP95Ms 33.3"
     ],
     "cleanup": [
       "Remove-Item -Recurse -Force build/windows-x64-release-transport-selection,build/transport-selection-results,build/tsb -ErrorAction SilentlyContinue"
@@ -76,10 +77,10 @@
     "request_credit_characterization": "M2 source-owned request-credit pacing; 1000 target frames per mode; every request published or explicitly cancelled; every published buffer released; mode-specific throughput and p95 gates; zero sequence, marker, slot-pressure, or pre-Frame-Server copy errors",
     "source_local_render": "S1 allocator-owned GPU rendering in the media-source process; 1000 NV12 1920x1080 frames at 29.5-31.0fps; render-to-client p95 no more than 33.3ms; zero sequence or marker errors; zero pre-Frame-Server full-frame CPU copies",
     "source_local_productization": "H9 protocol v2 interactive-user control; restricted and low-integrity write denial; asset and protocol validation; fail-safe producer-dead transition; producer and Frame Server recovery; side-by-side activation; registration and artifact cleanup",
-    "source_local_physical_camera": "H8A exact physical-camera symbolic link; allocator-adapter GPU capture; 120-frame kill gate must classify only the reviewed service-exception, watchdog, or strict-gate failure; registration and staged artifacts restored in finally"
+    "source_local_physical_camera": "H8A exact physical-camera symbolic link; standalone, capture-only, copy-only, and full 1,000-frame RCA; allocator-adapter GPU capture; at least 29.5fps; capture-to-client p95 no more than 33.3ms; zero sequence, marker, physical-content, or pre-Frame-Server CPU copy errors; registration and staged artifacts restored in finally"
   },
   "verdict": {
     "outcome": "NO-GO",
-    "scope": "No tested Wave-1 app-to-source transport passed the unchanged NV12 1920x1080 30fps gates. S1 deterministic source-local rendering passed the automated gate, H9 protocol-v2 productization, and the available recovery, OBS, and Tencent Meeting subset, but H8A physical-camera capture is NO-GO: the Frame Server-hosted source cannot sustain recursive physical-camera reads. The source-adapter handoff also failed its latency gate. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate. No transport primary or technical fallback is selected."
+    "scope": "No tested Wave-1 app-to-source transport passed the unchanged NV12 1920x1080 30fps gates. S1 deterministic source-local rendering passed the automated gate, H9 protocol-v2 productization, and the available recovery, OBS, and Tencent Meeting subset. Corrected H8A evidence proves stable 1,000-frame physical capture and GPU conversion, but the integrated path reached only 29.327fps and 50.167ms p95, failing both strict gates. The source-adapter handoff also failed its latency gate. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate. No transport primary or technical fallback is selected."
   }
 }

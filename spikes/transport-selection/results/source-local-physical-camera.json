@@ -9,40 +9,87 @@
     "camera_selection": "exact Media Foundation symbolic link",
     "capture_format": "GPU-backed BGRA 1920x1080 at 30fps",
     "output_format": "allocator-owned NV12 1920x1080 at 30fps",
-    "requested_frames": 120,
+    "requested_frames": 1000,
     "minimum_fps": 29.5,
     "maximum_capture_to_client_p95_ms": 33.3,
-    "maximum_watchdog_seconds": 45
+    "maximum_watchdog_seconds": 150
+  },
+  "rca": {
+    "historical_symptoms": [
+      "DXGI_ERROR_DEVICE_REMOVED (0x887A0005)",
+      "WAIT_TIMEOUT (0x80070102)",
+      "Frame Server service exception (0x80070428)",
+      "45-second watchdog"
+    ],
+    "standalone_capture": {
+      "status": "PASS",
+      "frames": 1000,
+      "fps": 29.525,
+      "skipped_sequences": 0,
+      "device_removed_reason": "0x00000000",
+      "sampled_source_luma_range_min": 3,
+      "sampled_source_luma_range_max": 11,
+      "sampled_frames": 15,
+      "sampled_frames_below_old_range_threshold": 14
+    },
+    "capture_only": {
+      "status": "PASS",
+      "frames": 1000,
+      "fps": 29.334,
+      "capture_to_client_p95_ms": 52.279,
+      "skipped_sequences": 0,
+      "duplicate_sequences": 0
+    },
+    "copy_only": {
+      "status": "PASS",
+      "frames": 1000,
+      "fps": 29.338,
+      "capture_to_client_p95_ms": 52.260,
+      "skipped_sequences": 0,
+      "duplicate_sequences": 0
+    },
+    "full_diagnostic": {
+      "status": "PASS",
+      "frames": 1000,
+      "fps": 29.356,
+      "capture_to_client_p95_ms": 50.662,
+      "skipped_sequences": 0,
+      "duplicate_sequences": 0,
+      "physical_content_errors": 0
+    },
+    "corrected_defects": [
+      "retain each Media Foundation sample and texture until the D3D11 copy-completion query succeeds",
+      "keep immediate producer-dead process signaling while allowing a live producer five seconds of heartbeat scheduling tolerance and retaining capture across one transient stale frame",
+      "publish heartbeats on an above-normal-priority probe thread and emit publication diagnostics once instead of synchronously flushing stdout every 100ms",
+      "treat only zero sampled luma range as absent physical content because the measured source scene ranged from 3 to 11"
+    ]
   },
   "kill_gate": {
     "status": "NO-GO",
+    "reason": "throughput-and-latency",
     "physical_camera": "Integrated Camera",
-    "media_source_initialize_hresult": "0x00000000",
     "protocol_version": 2,
     "allocator_adapter_luid": "00000000:000178d8",
-    "first_gpu_conversion_observed": true,
-    "latest_run_result": "watchdog",
-    "latest_capture_hresult": "0x887A0005",
-    "latest_wait_hresult": "0x80070102",
-    "alternate_observed_consumer_error": "0x80070428",
-    "strict_gate_completed": false
-  },
-  "diagnostic_two_frame_run": {
-    "status": "NO-GO",
-    "requested_frames": 2,
-    "delivered_frames": 2,
-    "fps": 2.391,
-    "capture_to_client_p95_ms": 17.643,
-    "physical_content_errors": 2,
-    "marker_errors": 0,
+    "frames": 1000,
+    "fps": 29.327,
+    "capture_to_client_p50_ms": 27.632,
+    "capture_to_client_p95_ms": 50.167,
+    "capture_to_client_p99_ms": 52.512,
+    "capture_to_client_max_ms": 55.212,
     "skipped_sequences": 0,
-    "full_frame_cpu_copies_before_frame_server": 0
+    "duplicate_sequences": 0,
+    "marker_errors": 0,
+    "physical_content_errors": 0,
+    "delivered_luma_range_min": 2,
+    "delivered_luma_range_max": 10,
+    "full_frame_cpu_copies_before_frame_server": 0,
+    "strict_gate_completed": true
   },
   "conditional_checks": {
-    "client_reopen": "not-run; kill gate failed",
-    "frame_server_restart": "not-run; kill gate failed",
-    "applications": "not-run; kill gate failed",
-    "soak": "not-run; kill gate failed"
+    "client_reopen": "not-run; throughput and latency kill gates failed",
+    "frame_server_restart": "not-run; throughput and latency kill gates failed",
+    "applications": "not-run; throughput and latency kill gates failed",
+    "soak": "not-run; throughput and latency kill gates failed"
   },
-  "verdict": "The Frame Server-hosted custom media source can initialize the selected physical camera and complete an initial allocator-owned GPU conversion, but recursive physical-camera capture is not sustainable. Repeated runs either stalled after the first conversion until the 45-second watchdog, returned DXGI_ERROR_DEVICE_REMOVED (0x887A0005) followed by WAIT_TIMEOUT (0x80070102), or surfaced the Frame Server service exception 0x80070428 to the consumer. A two-frame diagnostic completed at only 2.391fps and both frames failed the physical-content gate. H8A is NO-GO and does not advance to recovery, application, or soak gates."
+  "verdict": "The corrected source-local path sustained 1,000 contiguous physical-camera frames through allocator-owned GPU conversion with zero sequence, marker, physical-content, or pre-Frame-Server CPU-copy errors. The historical device-removal, service-exception, and watchdog symptoms were probe lifetime and control-lifecycle defects, not a fundamental recursive-capture failure. The final gate still reached only 29.327fps and 50.167ms capture-to-client p95, missing both the 29.5fps and 33.3ms requirements. H8A remains NO-GO and does not advance to recovery, application, or soak gates."
 }

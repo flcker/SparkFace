@@ -258,9 +258,11 @@ The source-local productization runner uses protocol v2: a versioned shared
 control block owned by an interactive-session producer and read by the
 LocalService media source. It carries the exact physical-camera symbolic link,
 validates the fixed source asset before use, rejects protocol or asset
-mismatches to effect value zero, detects producer exit and stale heartbeats,
-and restricts writes to ordinary interactive users while denying restricted
-and low-integrity tokens.
+mismatches to effect value zero, detects producer process exit immediately,
+and treats a live producer heartbeat as stale after five seconds. The probe
+publishes that heartbeat on an above-normal-priority worker. Writes are
+restricted to ordinary interactive users while restricted and low-integrity
+tokens are denied.
 
 Run the elevated H9 gate with:
 
@@ -272,12 +274,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 | Scenario | Frames | Measured fps | Render-to-client p95 | Result |
 |---|---:|---:|---:|---|
-| Normal v2 control | 120 | 30.303 | 10.337ms | `PASS` |
-| Protocol mismatch fail-safe | 120 | 30.310 | 11.450ms | `PASS` |
-| Applied-to-producer-dead transition | 120 | 30.318 | 11.524ms | `PASS` |
-| Producer recovery | 120 | 30.350 | 11.721ms | `PASS` |
-| Frame Server restart | 120 | 30.195 | 11.611ms | `PASS` |
-| Side-by-side v2 activation | 120 | 30.374 | 12.341ms | `PASS` |
+| Normal v2 control | 120 | 30.295 | 11.249ms | `PASS` |
+| Protocol mismatch fail-safe | 120 | 30.335 | 10.803ms | `PASS` |
+| Applied-to-producer-dead transition | 120 | 30.303 | 12.452ms | `PASS` |
+| Producer recovery | 120 | 30.330 | 12.017ms | `PASS` |
+| Frame Server restart | 120 | 30.447 | 12.212ms | `PASS` |
+| Side-by-side v2 activation | 120 | 30.330 | 12.025ms | `PASS` |
 
 All scenarios had zero sequence, duplicate, or marker errors and zero
 pre-Frame-Server full-frame CPU copies. The ACL probe denied restricted and
@@ -311,27 +313,40 @@ GPU-backed BGRA samples, overlays the retained marker, and converts directly
 into allocator-owned NV12. The final probe uses one bounded MTA capture thread
 so physical reads never depend on the media-source delivery work queue.
 
-Reproduce the elevated 120-frame kill gate with:
+Reproduce the elevated 1,000-frame kill gate with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File scripts/run-source-local-physical-camera.ps1 `
-  -Frames 120 -MinimumFps 29.5 -MaximumP95Ms 33.3
+  -Frames 1000 -MinimumFps 29.5 -MaximumP95Ms 33.3
 ```
 
-H8A is `NO-GO`. The selected camera and D3D path initialized successfully and
-one allocator-owned GPU conversion completed, but the final run then returned
-`DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`), repeatedly timed out physical reads
-with `0x80070102`, and hit the 45-second watchdog. Other strict reruns surfaced
-the Frame Server service exception `0x80070428`. A two-frame diagnostic did
-complete, but only at 2.391fps and both delivered frames failed the physical
-content gate. The recursive physical-camera path inside the Frame Server host
-therefore cannot sustain capture and does not advance to client-reopen, Frame
-Server restart, application, or soak checks.
+The retained RCA runner separately proves standalone capture, capture-only,
+copy-only, and full delivery in that order:
 
-The runner treats only those reviewed kill-gate outcomes as the expected
-NO-GO, restores the previous COM registration in `finally`, and removes staged
-artifacts. Detailed evidence is retained in
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-source-local-physical-camera-rca.ps1 `
+  -Frames 1000 -MinimumFps 29.5 -MaximumP95Ms 33.3
+```
+
+H8A remains `NO-GO`, but the retained reason is corrected. Standalone capture
+delivered 1,000 contiguous frames at 29.525fps without device removal. The
+staged RCA proved stable capture and GPU-copy lifetimes; it also found that a
+transient heartbeat-stale control frame was tearing down and reopening the
+camera. Retaining the sample until GPU copy completion and allowing one stale
+heartbeat frame removed the historical device-removal, service-exception, and
+watchdog failures.
+
+The final integrated run delivered 1,000 contiguous, physically sourced
+frames with zero sequence, marker, physical-content, or pre-Frame-Server CPU
+copy errors. It reached 29.327fps and 50.167ms capture-to-client p95, missing
+both the 29.5fps minimum and 33.3ms p95 maximum. The source scene had only a
+3–8 luma range before conversion, so the physical-content gate now rejects
+only a zero-range frame instead of misclassifying valid low-contrast input.
+H8A therefore does not advance to client-reopen, application, or soak checks.
+The runner restores the previous COM registration in `finally` and removes
+all staged artifacts. Detailed evidence is retained in
 `results/source-local-physical-camera.json`.
 
 ## Final decision
@@ -340,11 +355,11 @@ No tested Wave-1 app-to-source transport passed the unchanged 1080p30 gates.
 Request-credit pacing restored throughput and sequence correctness but failed
 the 33.3ms p95 latency gate. S1 deterministic source-local rendering passed the
 automated 1080p30 gate, H9 protocol-v2 productization, and the available
-recovery, OBS, and Tencent Meeting subset. H8A then proved that recursively
-opening the physical camera from the Frame Server-hosted source is not a viable
-integrated capture path. The previously tested source-adapter handoff already
-failed at 46.001ms p95, so neither source-local nor app-to-source integration
-provides a technical fallback.
+recovery, OBS, and Tencent Meeting subset. Corrected H8A evidence proves that
+Frame Server-hosted physical capture is functionally stable, but its integrated
+29.327fps and 50.167ms p95 still fail the contract. The previously tested
+source-adapter handoff failed at 46.001ms p95, so neither source-local nor
+app-to-source integration provides a technical fallback.
 
 Reduced-mode characterization separately retains M2 source-owned NV12
 1920×1080 at 15fps as an unaccepted product-fallback candidate. No transport

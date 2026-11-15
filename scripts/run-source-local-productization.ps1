@@ -95,6 +95,7 @@ function Invoke-Consumer([string]$Name, [int]$Revision, [int]$Value,
                          [int]$Status) {
     $log = Join-Path $resultRoot "$Name.consumer.log"
     $errorLog = Join-Path $resultRoot "$Name.consumer.err.log"
+    Remove-Item -Force -ErrorAction SilentlyContinue $log, $errorLog
     $arguments = @(
         "--frames", $Frames, "--minimum-fps", $MinimumFps,
         "--maximum-p95-ms", $MaximumP95Ms,
@@ -297,12 +298,14 @@ try {
     Invoke-Consumer "producer-recovery" 104 40 0
     Restart-FrameServer
     Assert-CameraReady
+    Start-Sleep -Milliseconds 500
     Invoke-Consumer "frame-server-restart" 104 40 0
 
     $v2Dll = Join-Path $stageRoot "v2\VirtualCameraMediaSource.dll"
     Set-SourceRegistration $v2Dll
     Restart-FrameServer
     Assert-CameraReady
+    Start-Sleep -Milliseconds 500
     Invoke-Consumer "side-by-side-v2" 104 40 0
     Add-Content -LiteralPath $stateLog -Value "source_local_productization=pass"
     $runSucceeded = $true
