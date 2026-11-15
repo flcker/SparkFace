@@ -291,11 +291,11 @@ Retain the reproducible probe only on branch `spikes`. Record the measured verdi
 
 **Hypothesis:** At least one lightweight face-landmark ONNX model runs on the Iris Xe iGPU via ONNX Runtime DirectML within ~5-8ms/frame, with enough landmarks (≥68, ideally ~106-468) to drive natural face reshape. (Spec §6.1 #5, §9 "face model final selection", §6.3 spike 3.)
 
-**Result:** **NO-GO.** Both permissively licensed candidates produced sensible real-face landmarks, but neither met the `8.0ms` inference p95 gate. No model is selected for `core/face/`.
+**Result:** **GO.** The 468-point MediaPipe Face Mesh model with the MediaPipe BlazeFace short-range detector met the unchanged `8.0ms` p95 gate after both symbolic batch dimensions were fixed to one. The complete per-frame detector-to-landmark stage measured `5.4926ms` p95 on Intel Iris Xe.
 
 **Interfaces:**
 - Consumes: Task 0 env (ONNX Runtime DirectML on the iGPU).
-- Produces: **Verdict C** — measured latency and quality evidence for the 478-point quality candidate and 468-point lighter fallback candidate. Because both failed latency, it produces no selected model for the later v1 build plan.
+- Produces: **Verdict C** — select the Apache-2.0 468-point Face Mesh model plus BlazeFace short-range detector for the later v1 build plan; retain the 478-point candidate as rejected latency evidence.
 
 - [x] **Step 1: Gather candidate models**
 
@@ -303,23 +303,23 @@ Pinned the Apache-2.0 MediaPipe Face Landmarker 478-point ONNX model and the lig
 
 - [x] **Step 2: Write the benchmark harness**
 
-The retained C++17 harness loads a pinned model through ONNX Runtime DirectML 1.24.4 on device 0 with CPU EP fallback disabled. It validates dynamic model shapes, performs deterministic PPM resize and normalization before timing, preallocates input/output tensors, warms up 10 frames, measures 100 `Ort::Session::Run` calls with QPC, reports p50/p95/p99/max and peak working set, and writes a landmark overlay after timing.
+The retained C++17 harness loads pinned models through ONNX Runtime DirectML 1.24.4 on device 0 with CPU EP fallback disabled. The retest fixes detector `batch` and landmark `N` to one, preallocates tensors and scratch buffers, performs 100 warm-ups and 1,000 measured frames, and measures both landmark-only inference and the complete per-frame RGB preprocessing → BlazeFace → SSD decode/weighted NMS → roll-aligned ROI → Face Mesh → full-image mapping stage.
 
 - [x] **Step 3: Run all candidates + record**
 
-On Intel Iris Xe driver `32.0.101.7092`, the 478-point primary candidate measured `11.5629ms` p50 / `15.5720ms` p95 and the 468-point fallback candidate measured `3.2740ms` p50 / `9.8847ms` p95. Both completed all 100 frames with finite outputs; both failed the `8.0ms` p95 gate.
+The original run measured the 478-point candidate at `15.5720ms` p95 and the symbolic-batch 468-point candidate at `9.8847ms` p95. On the same Intel Iris Xe driver `32.0.101.7092`, fixed `N=1` reduced 468-point landmark-only p95 to `2.2347ms`; the complete detector-to-landmark stage measured `4.9066ms` p50 / `5.4926ms` p95 / `5.8469ms` p99 across 1,000 frames, with zero frames over `8.0ms`.
 
 - [x] **Step 4: Visual quality sanity (landmarks on a real face)**
 
-Both candidates ran on a SHA-256-pinned CC0 Metropolitan Museum portrait cropped to the documented square face ROI. Generated overlays visibly aligned eyes, nose, mouth, and face contour; the 478-point candidate also localized iris points. Both quality gates passed.
+The complete fixed-batch pipeline ran on the SHA-256-pinned CC0 Metropolitan Museum portrait. Its generated overlay visibly aligned eyes, nose, mouth, and face contour; detector confidence was `0.908732` and landmark presence was `1.0`.
 
 - [x] **Step 5: Select + designate fallback**
 
-No model was selected. The 478-point quality candidate failed latency by `7.5720ms`; the lighter 468-point fallback candidate also failed by `1.8847ms`. Its passing median does not override the failed p95 gate.
+Select the 468-point MediaPipe Face Mesh model plus MediaPipe BlazeFace short-range detector for v1. The 478-point quality candidate remains rejected because its measured `15.5720ms` p95 exceeds the gate.
 
 - [x] **Step 6: Record Verdict C and preserve evidence**
 
-Verdict C is **NO-GO**. Executable evidence, strict manifests, acquisition scripts, retained license text, reproduction instructions, measured results, and the NO-GO rationale are preserved under `spikes/face/` by evidence PR [#9](https://github.com/flcker/SparkFace/pull/9). Canonical detail: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
+Verdict C is **GO**. Original candidate evidence and the superseded NO-GO are retained by evidence PR [#9](https://github.com/flcker/SparkFace/pull/9); fixed-batch landmark and complete-stage evidence are retained by evidence PR [#19](https://github.com/flcker/SparkFace/pull/19). Canonical detail: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
 
 ---
 
@@ -335,17 +335,17 @@ Verdict C is **NO-GO**. Executable evidence, strict manifests, acquisition scrip
 - Spike B2: **NO-GO** — `correctness=pass`; `d3d11_readback_p95_ms=6.375`; `bgfx_roundtrip_p95_ms=10.932`; `ring_publish_p95_ms=0.359`; producer-side `transport_total_p95_ms=22.014`; real camera `source_enqueue_p95_ms=16.439`, `frame_server_delivery_p95_ms=48.826`, and producer-to-client `p95_ms=78.099`; 1,000 valid MF frames had `0` skipped, `23` duplicate, and `0` marker/content errors; idle black began in `46.442ms`; producer recovery without reopening=`yes`; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 rendered the full moving 1920×1080 pattern separately; clean remove=`yes`; `product_30fps_proven=no`. The fallback proves synthetic 1080p30 throughput and application compatibility but exceeds the 33.3ms product budget before face ML and production beauty shaders. Full evidence: [Spike B/B2 — GPU handoff and CPU fallback](2026-11-10-phase0-spike-b2-fallback.md).
 - Spike B3: **NO-GO** — `wait_producer_to_client_p95_ms=79.820`, `immediate_producer_to_client_p95_ms=57.635`, `winner=immediate`, `wait_validity=pass`, `immediate_validity=pass`, `winner_recovery=yes`, `winner_apps=OBS moving pattern rendered / Tencent Meeting moving pattern rendered`, `winner_soak=not-run p95 gate`, `source_enqueue_boundary=unavailable`, `product_30fps_proven=no`.
 - Spike B4: **NO-GO** — `async_request_queue=yes`; `mf_frames=1000`; `mf_b4_diagnostic_frames=1000`; `mf_fps_achieved=26.644`; `producer_to_client_frame_age_p95_ms=48.758`; `source_wait_p95_ms=63.205`; `producer_fps=29.992`; producer `transport_total_p95_ms=22.920`; `skipped_sequences=125`; `duplicate_sequences=0`; `marker_errors=0`; recovery/apps/soak=`not-run automated gate failed`; `product_30fps_proven=no`. Asynchronous `RequestSample` removed the synchronous wait but did not meet either the 29.5fps or 33.3ms gate.
-- Spike C: **NO-GO** — `selected_model=none`; 478-point Apache-2.0 primary candidate `p50_ms=11.5629`, `p95_ms=15.5720`, `quality=pass`; 468-point Apache-2.0 fallback candidate `p50_ms=3.2740`, `p95_ms=9.8847`, `quality=pass`; gate=`p95 <= 8.0ms`; `warmup_frames=10`; `measured_frames=100`; `provider=DmlExecutionProvider`; `cpu_ep_fallback=disabled`; adapter=`Intel Iris Xe 32.0.101.7092`. Full verdict: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
+- Spike C: **GO** — `selected_model=mediapipe-face-mesh-468-f32-onnx`; `selected_detector=mediapipe-blazeface-short-range-f32-onnx`; fixed-N landmark-only `p50_ms=1.7951`, `p95_ms=2.2347`; complete per-frame detector-to-landmark `p50_ms=4.9066`, `p95_ms=5.4926`, `p99_ms=5.8469`, `max_ms=6.2241`, `frames_over_8_ms=0`; gate=`p95 <= 8.0ms`; `warmup_frames=100`; `measured_frames=1000`; `quality=pass`; `provider=DmlExecutionProvider`; `cpu_ep_fallback=disabled`; adapter=`Intel Iris Xe 32.0.101.7092`. Full verdict: [Spike C — DirectML face-model selection](2026-11-12-phase0-spike-c-face-model.md).
 - Spike D: **NO-GO** — cross-process D3D11 shared-texture recovery failed the same-adapter prerequisite before frame delivery. The interactive Intel Iris Xe producer used adapter LUID `00000000:0000ffd8`; the out-of-process Frame Server source's D3D11-aware custom allocator produced `IMFDXGIBuffer` textures on LUID `00000000:000178d8`. Requested/delivered frames=`1000/0`; FPS and producer-to-client p95=`n/a`; payload validation, recovery, applications, and soak=`not-run automated gate failed`; original B2 COM registration restored=`yes`. Evidence PR [#11](https://github.com/flcker/SparkFace/pull/11); full verdict: [Spike D — cross-process D3D11 virtual-camera handoff](2026-11-13-phase0-spike-d-d3d11-handoff.md).
 - Transport replacement selection: **NO-GO** — G1 delivered 1,000 frames at `30.093fps` but measured `46.001ms` p95; G2/G3 lacked cross-node sharing; M1 passed first-frame shared-buffer acceptance, but M2 producer-owned/source-owned modes measured `28.798/28.819fps` and `33.569/33.428ms` p95 against the unchanged `29.5fps` minimum and `33.3ms` maximum; A1 failed activation with `0x80040154`; A2 remained in Frame Server `svchost.exe`; M7/M8 failed activation with `0xC00D36B4`. No transport primary, technical fallback, or product fallback is selected; conditional recovery/application/soak/integrated gates were not run because no candidate survived. Evidence PR [#13](https://github.com/flcker/SparkFace/pull/13); full verdict: [Phase-0 virtual-camera transport selection](2026-11-14-phase0-transport-selection-verdict.md).
 
 ## Gate to v1 Build Plan
 
-The detailed v1 build plan is **blocked**. Spike A/A2 established an accepted single-consumer virtual-camera contract, but Spikes B through B4, D, and the replacement transport-selection wave all returned **NO-GO**. No transport primary or technical fallback is selected. Spike C also returned **NO-GO** without selecting a face model.
+The detailed v1 build plan is **blocked**. Spike A/A2 established an accepted single-consumer virtual-camera contract, and Spike C selected a face-model path, but Spikes B through B4, D, and the replacement transport-selection wave all returned **NO-GO**. No transport primary or technical fallback is selected.
 
 Before writing `docs/plans/<date>-v1-build.md`, make an explicit product/architecture decision that changes a failed constraint—such as the performance promise, default resolution, transport architecture, driver policy, or external-bridge requirement—and validate the replacement with a GO or explicitly accepted GO-WITH-CAVEAT. The eventual build plan must be informed by:
 - the custom media-source registration, IPC, lifecycle, accepted formats, and app compatibility confirmed in Spike A,
 - the measured GPU, CPU, shared-buffer, activation-topology, and compressed-subtype limits from Spikes B through D and the transport-selection wave,
-- Spike C's no-selection verdict and measured DirectML latency/quality evidence.
+- Spike C's selected BlazeFace plus 468-point Face Mesh path and measured DirectML latency/quality evidence.
 
 Only after those gates are accepted should a second planning pass implement the modules in the [v1 MVP design](../specs/2026-08-15-v1-mvp-design.md) §3.

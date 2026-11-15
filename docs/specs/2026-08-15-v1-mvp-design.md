@@ -217,7 +217,7 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 | 2 | **跨 device GPU 链 + camera handoff**：D3D11→D3D12 共享、fence/state ownership、DirectML/bgfx interop、Frame Server 是否保留 GPU surface 都未验 | **Spike B**：NT shared handle + shared fence；验证 DirectML I/O binding、bgfx native resource、`MFCreateDXGISurfaceBuffer`；不通才测一次 readback + shared-memory fallback |
 | 3 | **iGPU 30fps 预算**（Iris Xe @33ms 跑采集+解码+人脸+美颜+handoff+调度）没有安全余量 | iGPU 参考机从 day1 当性能门禁；预算实测非估；爆预算兜底：更轻模型、隔帧检测或 24fps |
 | 4 | **bgfx compute + 原生资源交接**未验 | Spike B 在 D3D12 下运行 compute，验证支持的 native-resource 接口及是否隐藏复制 |
-| 5 | **人脸模型选型**（轻到 iGPU DirectML ~5-8ms、关键点够 face-reshape“自然”） | benchmark MediaPipe 468-pt ONNX 与轻量 68/106/190-pt 候选；选最轻达标模型并指定 fallback |
+| 5 | **人脸模型选型**（轻到 iGPU DirectML ~5-8ms、关键点够 face-reshape“自然”） | **Spike C：GO**；v1 选 MediaPipe BlazeFace short-range + 468-point Face Mesh，固定 batch=1，Iris Xe 完整逐帧 detection→ROI→landmark p95 `5.4926ms`，CPU EP fallback 禁用 |
 | 6 | **“自然不塑料”质量天花板** | 真人脸素材早做视觉验证；调预置并对照 GPUPixel/GPUImage 输出做 sanity |
 | 7 | **多 GPU 拓扑**：三个 device 不在同一 adapter 时共享链可能失效 | v1 优先同 adapter(iGPU)；Spike B 按 adapter LUID 断言；dGPU 60fps 路线后置 |
 | 8 | **MJPEG 解码**：解码延迟及输出格式可能破坏共享链 | 预算计入解码；验证硬解输出格式，否则明确测量转换成本 |
@@ -284,7 +284,6 @@ clang-format / clang-tidy / cmake-format + pre-commit hook。
 - **NDI**：v4 可选专有插件；或后续用 SRT/WebRTC 纯开源替代做网络推流。
 - **Windows 10**：v1 明确不支持；若未来有市场需求，单独评估 backend，不为其保留内核驱动占位。
 - **通话场景延迟压低**：v5（macOS + 通话 app 兼容）阶段再处理，v1 不压通话延迟。
-- **人脸模型最终选型**：spike benchmark 后定（MediaPipe 468-pt vs 更轻 68/106/190-pt）。
 - **dGPU 60fps 路线**：跨 adapter 拷贝权衡留 spike，v1 不承诺集显 60 流畅。
 - **像素-buffer 预览模式**：`sf_preview_query_format` 支持与否待实现期定，看 UI 端需求。
 - **多消费者虚拟摄像头**：post-v1 重新立项；v1 不承诺两个应用同时打开同一设备。届时在多设备别名、应用插件和 AVStream 驱动之间按兼容性与维护成本重新选型。
