@@ -72,8 +72,14 @@ function Start-Producer([string]$Name, [string]$Mode, [int]$Revision,
         throw "Producer $Name exited before publication"
     }
     $log = Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue
-    if ($log -notmatch "(?m)^control_publish_revision=$Revision`r?$") {
-        throw "Producer $Name did not publish revision $Revision"
+    foreach ($line in @(
+        "control_publish_revision=$Revision",
+        "control_physical_camera=0",
+        "control_protocol_version=2"
+    )) {
+        if ($log -notmatch "(?m)^$([regex]::Escape($line))`r?$") {
+            throw "Producer $Name did not prove $line"
+        }
     }
     return $process
 }
@@ -92,6 +98,7 @@ function Invoke-Consumer([string]$Name, [int]$Revision, [int]$Value,
     $arguments = @(
         "--frames", $Frames, "--minimum-fps", $MinimumFps,
         "--maximum-p95-ms", $MaximumP95Ms,
+        "--warmup-frames", 5,
         "--expect-control-revision", $Revision,
         "--expect-control-value", $Value,
         "--expect-control-status", $Status
@@ -132,6 +139,7 @@ function Invoke-CrashTransition($Process, [int]$Revision, [int]$Value) {
     $appliedFrames = [Math]::Min(30, $Frames - 1)
     $arguments = @(
         "--frames", $Frames, "--minimum-fps", $MinimumFps,
+        "--warmup-frames", 5,
         "--maximum-p95-ms", $MaximumP95Ms,
         "--expect-control-revision", $Revision,
         "--expect-control-value", $Value,
@@ -161,14 +169,19 @@ function Invoke-CrashTransition($Process, [int]$Revision, [int]$Value) {
         Stop-Process -Id $capture.Id -Force
         throw "Crash transition consumer did not finish"
     }
+    $capture.WaitForExit()
+    $exitCode = $capture.ExitCode
+    $processFailed = $null -ne $exitCode -and $exitCode -ne 0
     $output = Get-Content -LiteralPath $log -Raw
-    if ($capture.ExitCode -ne 0 -or
-        $output -notmatch "(?m)^source_local_control_transition_applied=1`r?$" -or
-        $output -notmatch "(?m)^source_local_control_transition_dead=1`r?$" -or
-        $output -notmatch "(?m)^source_local_control_status=7`r?$" -or
-        $output -notmatch "(?m)^marker_errors=0`r?$" -or
-        $output -notmatch "(?m)^SOURCE_LOCAL_GATE_PASS`r?$") {
-        throw "Crash transition consumer did not prove Applied-to-ProducerDead"
+    $appliedObserved = $output -match "(?m)^source_local_control_transition_applied=1`r?$"
+    $deadObserved = $output -match "(?m)^source_local_control_transition_dead=1`r?$"
+    $statusObserved = $output -match "(?m)^source_local_control_status=7`r?$"
+    $markerGatePassed = $output -match "(?m)^marker_errors=0`r?$"
+    $consumerGatePassed = $output -match "(?m)^SOURCE_LOCAL_GATE_PASS`r?$"
+    if ($processFailed -or -not $appliedObserved -or -not $deadObserved -or
+        -not $statusObserved -or -not $markerGatePassed -or
+        -not $consumerGatePassed) {
+        throw "Crash transition consumer evidence failed: exit_code=$exitCode applied=$appliedObserved dead=$deadObserved status=$statusObserved markers=$markerGatePassed gate=$consumerGatePassed"
     }
     $trace = Get-Content -LiteralPath $sourceTrace -Raw
     if ($trace -notmatch "(?m)^source_local_h9_status=7 revision=0 value=0`r?$") {
@@ -294,6 +307,10 @@ try {
     Add-Content -LiteralPath $stateLog -Value "source_local_productization=pass"
     $runSucceeded = $true
 } finally {
+    if (Test-Path -LiteralPath $sourceTrace -PathType Leaf) {
+        Copy-Item -LiteralPath $sourceTrace `
+            -Destination (Join-Path $resultRoot "source-trace.log") -Force
+    }
     Stop-Producer $producerProcess
     $restoreError = $null
     if ($registrationChanged) {

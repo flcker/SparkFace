@@ -97,6 +97,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../mf-shared-buffer/shared_ring
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../codec-bridge/CompressedFrameSource.h") `
     -Destination (Join-Path $mediaSource "CompressedFrameSource.h")
 
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/PhysicalCameraCapture.h") `
+    -Destination (Join-Path $mediaSource "PhysicalCameraCapture.h")
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/SourceLocalRenderer.h") `
     -Destination (Join-Path $mediaSource "SourceLocalRenderer.h")
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../source-local/control_protocol.h") `

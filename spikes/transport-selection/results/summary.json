@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "date": "2026-11-14",
+  "date": "2026-11-15",
   "outcome": "NO-GO",
   "product_gate": {
     "format": "NV12 1920x1080 at 30fps",
@@ -102,23 +102,34 @@
       "marker_errors": 0,
       "full_frame_cpu_copies_before_frame_server": 0,
       "conditional_evidence": "partial; OBS and Tencent Meeting preview, reconnect, and ten-minute soaks passed",
-      "scope": "source-local minimal shader; H9 productization passed; full application, recovery, and integrated face/beauty gates remain incomplete"
+      "scope": "source-local minimal shader; H9 productization passed; H8A physical-camera capture is NO-GO"
+    },
+    "h8a_source_local_physical_camera": {
+      "outcome": "NO-GO",
+      "mode": "Integrated Camera to allocator-owned NV12 1920x1080 at 30fps",
+      "requested_frames": 120,
+      "first_gpu_conversion_observed": true,
+      "latest_run_result": "45-second watchdog after DXGI_ERROR_DEVICE_REMOVED and physical-read timeouts",
+      "alternate_observed_consumer_error": "0x80070428",
+      "diagnostic_two_frame_fps": 2.391,
+      "diagnostic_two_frame_physical_content_errors": 2,
+      "scope": "kill gate failed; recovery, application, and soak checks not run"
     }
   },
   "conditional_checks": {
     "recovery": "partial-pass; Frame Server restart, 30-second closed interval, and client reopen passed; sleep/resume, privacy-toggle, and logoff/login were not run",
     "applications": "partial-pass; OBS Studio 33.0.0 and Tencent Meeting 3.47.2.405 passed preview and reconnect; Zoom, Microsoft Teams, Discord, and DingTalk were not installed",
     "soak": "pass; OBS Studio and Tencent Meeting each completed ten minutes with live source-local conversion progress",
-    "integrated_face_beauty": "not-run; S1 exercised a minimal marker shader and Spike C remains NO-GO",
+    "integrated_face_beauty": "NO-GO; H8A source-local physical-camera capture stalled after the first GPU conversion or surfaced Frame Server service exception 0x80070428; face/beauty integration was not run",
     "product_security": "pass; versioned user-session control, ACL denial, fail-safe mismatch and producer-dead behavior, restart, side-by-side activation, registration restoration, and artifact cleanup passed"
   },
   "selection": {
     "transport_primary": "none",
     "technical_fallback": "none",
-    "source_local_candidate": "S1 source-local render passed the automated gate but is not selected",
+    "source_local_candidate": "S1 deterministic render passed, but H8A physical-camera capture is NO-GO",
     "product_fallback_candidate": "NV12 1920x1080 at 15fps via M2 source-owned slots",
     "product_fallback": "none accepted",
     "product_readiness": "blocked"
   },
-  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 source-local render passed the automated 1080p30 gate at 30.271fps and 12.415ms p95, H9 productization, and the available recovery, OBS, and Tencent Meeting subset, but remains unselected because the complete application, recovery, and integrated pipeline gates are incomplete. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
+  "verdict": "No tested app-to-source transport passed the unchanged NV12 1920x1080 30fps contract. S1 deterministic source-local rendering passed the automated 1080p30 gate, H9 protocol-v2 productization, and the available recovery, OBS, and Tencent Meeting subset, but H8A proved that recursive physical-camera capture in the Frame Server host is not sustainable. The source-adapter handoff previously failed at 46.001ms p95. M2 source-owned NV12 1920x1080 at 15fps remains a separate unaccepted product-fallback candidate; no transport primary or technical fallback is selected."
 }

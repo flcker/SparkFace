@@ -2,26 +2,32 @@
 #include "control_protocol.h"
 
 #include <Aclapi.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <wrl/client.h>
 #include <sddl.h>
 
 #include <array>
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
+#include <vector>
 namespace {
 
 using namespace SparkFaceSourceLocalControl;
 
 struct Options {
-    enum class Mode { Hold, Mismatch, AclProbe } mode = Mode::Hold;
+    enum class Mode { Hold, Mismatch, AclProbe, ListCameras } mode = Mode::Hold;
     std::uint32_t value = 50;
     std::uint32_t revision = 1;
     DWORD heartbeatMilliseconds = 100;
     DWORD holdMilliseconds = 0;
+    bool physicalCamera = false;
+    std::wstring cameraName;
 };
 
 struct SecurityAttributes final {
@@ -94,8 +100,11 @@ Options parse_options(int argc, wchar_t** argv) {
                 options.mode = Options::Mode::Mismatch;
             } else if (mode == L"acl-probe") {
                 options.mode = Options::Mode::AclProbe;
+            } else if (mode == L"list-cameras") {
+                options.mode = Options::Mode::ListCameras;
             } else {
-                throw std::invalid_argument("--mode must be hold, mismatch, or acl-probe");
+                throw std::invalid_argument(
+                    "--mode must be hold, mismatch, acl-probe, or list-cameras");
             }
         } else if (argument == L"--value" && index + 1 < argc) {
             options.value = static_cast<std::uint32_t>(std::stoul(argv[++index]));
@@ -105,15 +114,21 @@ Options parse_options(int argc, wchar_t** argv) {
             options.heartbeatMilliseconds = static_cast<DWORD>(std::stoul(argv[++index]));
         } else if (argument == L"--hold-ms" && index + 1 < argc) {
             options.holdMilliseconds = static_cast<DWORD>(std::stoul(argv[++index]));
+        } else if (argument == L"--physical-camera") {
+            options.physicalCamera = true;
+        } else if (argument == L"--camera-name" && index + 1 < argc) {
+            options.cameraName = argv[++index];
         } else {
             throw std::invalid_argument(
                 "usage: transport_source_local_control_producer "
-                "[--mode hold|mismatch|acl-probe] [--value 0..100] "
-                "[--revision N] [--heartbeat-ms N] [--hold-ms N]");
+                "[--mode hold|mismatch|acl-probe|list-cameras] "
+                "[--value 0..100] [--revision N] [--heartbeat-ms N] "
+                "[--hold-ms N] [--physical-camera] [--camera-name NAME]");
         }
     }
     if (!IsEffectValueValid(options.value) || options.revision == 0 ||
-        options.heartbeatMilliseconds == 0) {
+        options.heartbeatMilliseconds == 0 ||
+        (!options.cameraName.empty() && !options.physicalCamera)) {
         throw std::invalid_argument("Producer values must be valid");
     }
     return options;
@@ -382,11 +397,104 @@ std::int64_t qpc_now() {
     return qpc.QuadPart;
 }
 
+void check_hresult(HRESULT result, const char* operation) {
+    if (FAILED(result)) {
+        throw std::runtime_error(std::string(operation) + " hresult=" +
+                                 std::to_string(static_cast<std::uint32_t>(result)));
+    }
+}
+
+class MfGuard final {
+  public:
+    MfGuard() { check_hresult(MFStartup(MF_VERSION), "MFStartup"); }
+    ~MfGuard() { MFShutdown(); }
+};
+
+struct CameraDevice {
+    std::wstring name;
+    std::wstring symbolicLink;
+};
+
+std::vector<CameraDevice> enumerate_physical_cameras() {
+    Microsoft::WRL::ComPtr<IMFAttributes> attributes;
+    check_hresult(MFCreateAttributes(&attributes, 1), "MFCreateAttributes");
+    check_hresult(attributes->SetGUID(
+                      MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                      MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID),
+                  "Set source type");
+    IMFActivate** rawDevices = nullptr;
+    UINT32 count = 0;
+    check_hresult(MFEnumDeviceSources(attributes.Get(), &rawDevices, &count),
+                  "MFEnumDeviceSources");
+    std::vector<CameraDevice> devices;
+    for (UINT32 index = 0; index < count; ++index) {
+        wchar_t* rawName = nullptr;
+        wchar_t* rawLink = nullptr;
+        UINT32 nameLength = 0;
+        UINT32 linkLength = 0;
+        const HRESULT nameResult = rawDevices[index]->GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, &rawName, &nameLength);
+        const HRESULT linkResult = rawDevices[index]->GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, &rawLink,
+            &linkLength);
+        if (SUCCEEDED(nameResult) && SUCCEEDED(linkResult) && rawName != nullptr &&
+            rawLink != nullptr &&
+            std::wstring_view(rawName).find(L"SparkFace Phase0 B2 Camera") != 0) {
+            devices.push_back({std::wstring(rawName, nameLength),
+                               std::wstring(rawLink, linkLength)});
+        }
+        CoTaskMemFree(rawName);
+        CoTaskMemFree(rawLink);
+        rawDevices[index]->Release();
+    }
+    CoTaskMemFree(rawDevices);
+    return devices;
+}
+
+CameraDevice select_camera(const Options& options,
+                           const std::vector<CameraDevice>& devices) {
+    std::optional<CameraDevice> selected;
+    for (const auto& device : devices) {
+        if ((!options.cameraName.empty() && device.name == options.cameraName) ||
+            (options.cameraName.empty() && devices.size() == 1)) {
+            if (selected.has_value()) {
+                throw std::runtime_error("Physical camera selection is ambiguous");
+            }
+            selected = device;
+        }
+    }
+    if (!selected.has_value()) {
+        throw std::runtime_error(
+            options.cameraName.empty() ? "Exactly one physical camera is required"
+                                       : "Requested physical camera was not found");
+    }
+    if (selected->symbolicLink.empty() ||
+        selected->symbolicLink.size() >= CameraSymbolicLinkCapacity) {
+        throw std::runtime_error("Physical camera symbolic link is invalid");
+    }
+    return *selected;
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     try {
         const Options options = parse_options(argc, argv);
+        MfGuard mediaFoundation;
+        const std::vector<CameraDevice> cameras = enumerate_physical_cameras();
+        if (options.mode == Options::Mode::ListCameras) {
+            std::wcout << L"physical_camera_count=" << cameras.size() << L'\n';
+            for (std::size_t index = 0; index < cameras.size(); ++index) {
+                std::wcout << L"physical_camera_" << index << L"_name="
+                           << cameras[index].name << L'\n';
+            }
+            return cameras.empty() ? 2 : 0;
+        }
+        std::optional<CameraDevice> selectedCamera;
+        if (options.physicalCamera) {
+            selectedCamera = select_camera(options, cameras);
+        }
+
         grant_local_service_process_query();
         SecurityAttributes security;
         build_security_attributes(&security);
@@ -425,11 +533,23 @@ int wmain(int argc, wchar_t** argv) {
             snapshot.revision = options.revision;
             snapshot.producerPid = GetCurrentProcessId();
             snapshot.heartbeatQpc = qpc_now();
-            snapshot.flags = 1;
+            snapshot.flags = options.physicalCamera ? FlagPhysicalCamera : 0;
             snapshot.effectValue = options.value;
+            if (selectedCamera.has_value()) {
+                snapshot.cameraSymbolicLinkLength = static_cast<std::uint32_t>(
+                    selectedCamera->symbolicLink.size());
+                for (std::size_t index = 0;
+                     index < selectedCamera->symbolicLink.size(); ++index) {
+                    snapshot.cameraSymbolicLink[index] =
+                        selectedCamera->symbolicLink[index];
+                }
+            }
             Publish(view.value, snapshot, mismatch);
             std::cout << "control_publish_revision=" << snapshot.revision << '\n'
                       << "control_publish_value=" << snapshot.effectValue << '\n'
+                      << "control_physical_camera="
+                      << (options.physicalCamera ? 1 : 0) << '\n'
+                      << "control_protocol_version=" << Version << '\n'
                       << "control_protocol_mismatch=" << (mismatch ? 1 : 0)
                       << std::endl;
             Sleep(options.heartbeatMilliseconds);
