@@ -187,6 +187,72 @@
       }
     }
   ],
+  "detectors": [
+    {
+      "id": "mediapipe-blazeface-short-range-f32-onnx",
+      "role": "face_detector",
+      "filename": "face_detection_short_range.onnx",
+      "source": {
+        "repository": "https://github.com/yakhyo/mediapipe-face-mesh-onnx",
+        "commit": "3bdf1e0d100a4c709766c051a0c9e9cdab1fed62",
+        "release_id": 361120202,
+        "release_asset_id": 492768442,
+        "download_url": "https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_detection_short_range.onnx",
+        "source_readme_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+        "source_license_url": "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+        "upstream_model": "MediaPipe BlazeFace short-range"
+      },
+      "sha256": "2f2689b040becf555706d2cb978d2f0e3296ea82413734fba9a856c66c5f2b17",
+      "size_bytes": 470549,
+      "license": {
+        "spdx": "Apache-2.0",
+        "commercial_use": "permitted",
+        "weight_evidence": "The pinned source README identifies the detector as the MediaPipe short-range model, documents the shipped ONNX weight, and applies Apache-2.0 to the model and repository.",
+        "evidence_urls": [
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/README.md",
+          "https://raw.githubusercontent.com/yakhyo/mediapipe-face-mesh-onnx/3bdf1e0d100a4c709766c051a0c9e9cdab1fed62/LICENSE",
+          "https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE"
+        ],
+        "retained_text": "licenses/yakhyo-mediapipe-face-mesh-onnx-Apache-2.0.txt"
+      },
+      "profile": {
+        "opset": 17,
+        "input": {
+          "node": "input",
+          "shape": [
+            "batch",
+            3,
+            128,
+            128
+          ],
+          "layout": "nchw",
+          "channel_order": "rgb",
+          "normalization": "(float32(value) - 127.5) / 127.5"
+        },
+        "outputs": [
+          {
+            "index": 0,
+            "node": "regressors",
+            "shape": [
+              "batch",
+              896,
+              16
+            ]
+          },
+          {
+            "index": 1,
+            "node": "scores",
+            "shape": [
+              "batch",
+              896,
+              1
+            ]
+          }
+        ],
+        "postprocess": "MediaPipe SSD anchor decode, score threshold 0.5, weighted NMS at IoU 0.3, then a roll-aligned square ROI at 1.5 times the detected box long side."
+      }
+    }
+  ],
   "overlay_test_still": {
     "id": "met-elderly-man-full-face-cc0",
     "role": "real_face_overlay_verification",

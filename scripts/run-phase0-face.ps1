@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 [CmdletBinding()]
 param(
-    [int]$Warmup = 10,
-    [int]$Frames = 100,
+    [int]$Warmup = 100,
+    [int]$Frames = 1000,
     [double]$MaxP95Ms = 8.0
 )
 
@@ -39,45 +39,60 @@ function Join-InvariantFloats($Values) {
     }))
 }
 
-$failed = New-Object System.Collections.Generic.List[string]
-foreach ($model in $manifest.models) {
-    $modelPath = Join-Path $modelRoot $model.filename
-    if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf)) {
-        throw "Pinned model is missing: $modelPath"
-    }
+$model = @($manifest.models | Where-Object { $_.id -eq "mediapipe-face-mesh-468-f32-onnx" })
+$detector = @($manifest.detectors | Where-Object { $_.id -eq "mediapipe-blazeface-short-range-f32-onnx" })
+if ($model.Count -ne 1 -or $detector.Count -ne 1) {
+    throw "Expected exactly one pinned 468-point landmark model and one BlazeFace detector"
+}
 
-    $profile = $model.profile
-    $inputProfile = $profile.input
-    $overlayPath = Join-Path $resultRoot "$($model.id)-overlay.ppm"
-    $logPath = Join-Path $resultRoot "$($model.id).log"
-    $arguments = @(
-        "--model", $modelPath,
-        "--image", $imagePath,
-        "--input-width", [string]$inputProfile.width,
-        "--input-height", [string]$inputProfile.height,
-        "--layout", [string]$inputProfile.layout,
-        "--channel-order", [string]$inputProfile.channel_order,
-        "--scale", (Join-InvariantFloats $inputProfile.scale),
-        "--bias", (Join-InvariantFloats $inputProfile.bias),
-        "--landmark-count", [string]$profile.landmark_count,
-        "--dimensions", [string]$profile.dimensions,
-        "--coordinate-mode", [string]$profile.coordinate_mode.Replace("_", "-"),
-        "--input-index", [string]$profile.input_index,
-        "--output-index", [string]$profile.landmark_output_index,
-        "--warmup", [string]$Warmup,
-        "--frames", [string]$Frames,
-        "--max-p95-ms", $MaxP95Ms.ToString("R", $invariant),
-        "--overlay", $overlayPath
-    )
+$model = $model[0]
+$detector = $detector[0]
+$modelPath = Join-Path $modelRoot $model.filename
+$detectorPath = Join-Path $modelRoot $detector.filename
+if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $detectorPath -PathType Leaf)) {
+    throw "Pinned face model or detector is missing. Run spikes/face/fetch-models.ps1 first."
+}
 
-    Write-Host "candidate=$($model.id)"
-    & $executable @arguments 2>&1 | Tee-Object -FilePath $logPath
+$profile = $model.profile
+$inputProfile = $profile.input
+$commonArguments = @(
+    "--model", $modelPath,
+    "--image", $imagePath,
+    "--input-width", [string]$inputProfile.width,
+    "--input-height", [string]$inputProfile.height,
+    "--layout", [string]$inputProfile.layout,
+    "--channel-order", [string]$inputProfile.channel_order,
+    "--scale", (Join-InvariantFloats $inputProfile.scale),
+    "--bias", (Join-InvariantFloats $inputProfile.bias),
+    "--landmark-count", [string]$profile.landmark_count,
+    "--dimensions", [string]$profile.dimensions,
+    "--coordinate-mode", [string]$profile.coordinate_mode.Replace("_", "-"),
+    "--input-index", [string]$profile.input_index,
+    "--output-index", [string]$profile.landmark_output_index,
+    "--warmup", [string]$Warmup,
+    "--frames", [string]$Frames,
+    "--max-p95-ms", $MaxP95Ms.ToString("R", $invariant)
+)
+
+function Invoke-FaceProbe([string]$Name, [object[]]$Arguments, [string]$LogPath) {
+    Write-Host "probe=$Name"
+    & $executable @Arguments 2>&1 | Tee-Object -FilePath $LogPath
     if ($LASTEXITCODE -ne 0) {
-        $failed.Add("$($model.id): exit $LASTEXITCODE")
+        throw "$Name failed with exit code $LASTEXITCODE"
     }
 }
 
-if ($failed.Count -ne 0) {
-    throw "One or more face candidates failed: $([string]::Join('; ', $failed))"
-}
-Write-Host "FACE_SPIKE_CANDIDATES_PASS"
+$fixedArguments = $commonArguments + @(
+    "--overlay", (Join-Path $resultRoot "$($model.id)-fixed-n-overlay.ppm")
+)
+Invoke-FaceProbe -Name "fixed-n-landmark" -Arguments $fixedArguments `
+    -LogPath (Join-Path $resultRoot "$($model.id)-fixed-n.log")
+
+$pipelineArguments = @("--detector-model", $detectorPath) + $commonArguments + @(
+    "--overlay", (Join-Path $resultRoot "blazeface-face-mesh-468-fixed-n-overlay.ppm")
+)
+Invoke-FaceProbe -Name "complete-face-stage" -Arguments $pipelineArguments `
+    -LogPath (Join-Path $resultRoot "blazeface-face-mesh-468-fixed-n.log")
+
+Write-Host "FACE_SPIKE_RETEST_PASS"

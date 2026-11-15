@@ -165,6 +165,10 @@ foreach ($model in $manifest.models) {
     Get-AcquiredFile $model | Out-Null
 }
 
+foreach ($detector in $manifest.detectors) {
+    Get-AcquiredFile $detector | Out-Null
+}
+
 $stillPath = Get-AcquiredFile $manifest.overlay_test_still
 $ppmPath = Join-Path $destinationPath $manifest.overlay_test_still.ppm_filename
 Convert-JpegToPpm -Source $stillPath -Target $ppmPath -Crop $manifest.overlay_test_still.crop_xywh

@@ -27,7 +27,7 @@ endif()
 get_target_property(ORT_DML_RUNTIME_LIBRARY onnxruntime_directml IMPORTED_LOCATION)
 get_filename_component(ORT_DML_RUNTIME_DIR "${ORT_DML_RUNTIME_LIBRARY}" DIRECTORY)
 
-add_executable(face_spike main.cpp preprocess.cpp landmarks.cpp)
+add_executable(face_spike main.cpp preprocess.cpp landmarks.cpp detector.cpp)
 target_compile_definitions(face_spike PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
                                              SF_ORT_DML_VERSION="${ORT_DML_VERSION}")
 target_compile_options(face_spike PRIVATE /W4 /WX /permissive- /EHsc)
