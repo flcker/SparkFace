@@ -15,6 +15,7 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 | Plans / 计划 | [Spike B/B2 fallback evidence](plans/2026-11-10-phase0-spike-b2-fallback.md) | GPU interop failures, preallocated CPU fallback, Frame Server latency, recovery, and real-app evidence |
 | Plans / 计划 | [Spike C DirectML face-model verdict](plans/2026-11-12-phase0-spike-c-face-model.md) | Candidate provenance, fixed-batch DirectML retest, complete-stage latency, and selected v1 model path |
 | Plans / 计划 | [Spike D D3D11 handoff verdict](plans/2026-11-13-phase0-spike-d-d3d11-handoff.md) | Cross-session adapter-LUID failure for the Frame Server shared-texture path |
+| Plans / 计划 | [Transport architecture selection plan](plans/2026-11-14-virtual-camera-transport-selection.md) | Executed architecture inventory, staged kill gates, compatibility matrix, and decision rules |
 | Plans / 计划 | [Transport selection verdict](plans/2026-11-14-phase0-transport-selection-verdict.md) | Wave-1 replacement transport measurements, rejected candidates, and no-selection decision |
 
 ## Current Gate Status / 当前门禁状态
@@ -24,8 +25,8 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 - Spike B/B2/B3/B4 GPU sharing and camera handoff: **NO-GO** — the GPU-resident chain is unsupported; the CPU fallback is correct, but B4 still measured `48.758ms` p95 at `26.644fps`, failing both the 33.3ms latency and 29.5fps gates.
 - Spike C face-model DirectML performance: **GO** — fixed-batch 468-point Face Mesh measured `2.2347ms` landmark-only p95; BlazeFace → ROI → Face Mesh measured `5.4926ms` p95 across 1,000 complete per-frame stages with zero frames over the `8.0ms` gate.
 - Spike D cross-process D3D11 handoff: **NO-GO** — the interactive Iris Xe producer and Frame Server source allocator exposed different adapter LUIDs (`00000000:0000ffd8` vs. `00000000:000178d8`), so zero frames crossed the required same-adapter shared-texture path.
-- Transport architecture selection: **NO-GO** — no Wave-1 candidate passed the unchanged 1080p30 gates. The closest source-owned shared-slot path measured `28.819fps` and `33.428ms` p95, so no primary or technical fallback is selected.
-- Product implementation remains blocked by the unresolved virtual-camera transport NO-GOs; the face-model gate is resolved.
+- Transport architecture selection: **NO-GO / S1 candidate** — Wave 1 selected no transport. S1 source-local rendering later passed its automated 1080p30 gate at `30.271fps` and `12.415ms` p95 plus H9 productization, but incomplete H5 application, H6 recovery, and H8 integrated-pipeline gates prevent selection.
+- Product implementation remains blocked by the unresolved virtual-camera architecture; the face-model gate is resolved.
 
 ## Documentation Rules / 文档规则
 
