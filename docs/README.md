@@ -17,6 +17,7 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 | Plans / 计划 | [Spike D D3D11 handoff verdict](plans/2026-11-13-phase0-spike-d-d3d11-handoff.md) | Cross-session adapter-LUID failure for the Frame Server shared-texture path |
 | Plans / 计划 | [Transport architecture selection plan](plans/2026-11-14-virtual-camera-transport-selection.md) | Executed architecture inventory, staged kill gates, compatibility matrix, and decision rules |
 | Plans / 计划 | [Transport selection verdict](plans/2026-11-14-phase0-transport-selection-verdict.md) | Wave-1 replacement transport measurements, rejected candidates, and no-selection decision |
+| Plans / 计划 | [H8A source-local physical-camera verdict](plans/2026-11-15-phase0-source-local-physical-camera.md) | Protocol-v2 camera selection, recursive Frame Server capture failure, and final no-selection impact |
 
 ## Current Gate Status / 当前门禁状态
 
@@ -25,7 +26,7 @@ Long-form project documentation lives under `docs/`. The root READMEs remain the
 - Spike B/B2/B3/B4 GPU sharing and camera handoff: **NO-GO** — the GPU-resident chain is unsupported; the CPU fallback is correct, but B4 still measured `48.758ms` p95 at `26.644fps`, failing both the 33.3ms latency and 29.5fps gates.
 - Spike C face-model DirectML performance: **GO** — fixed-batch 468-point Face Mesh measured `2.2347ms` landmark-only p95; BlazeFace → ROI → Face Mesh measured `5.4926ms` p95 across 1,000 complete per-frame stages with zero frames over the `8.0ms` gate.
 - Spike D cross-process D3D11 handoff: **NO-GO** — the interactive Iris Xe producer and Frame Server source allocator exposed different adapter LUIDs (`00000000:0000ffd8` vs. `00000000:000178d8`), so zero frames crossed the required same-adapter shared-texture path.
-- Transport architecture selection: **NO-GO / S1 candidate** — Wave 1 selected no transport. S1 source-local rendering later passed its automated 1080p30 gate at `30.271fps` and `12.415ms` p95 plus H9 productization, but incomplete H5 application, H6 recovery, and H8 integrated-pipeline gates prevent selection.
+- Transport architecture selection: **NO-GO** — S1 deterministic source-local rendering and H9 protocol-v2 productization passed, but H8A physical-camera capture stalled after the first GPU conversion, removed the D3D device, or surfaced Frame Server service exception `0x80070428`. The source-adapter handoff had already failed at `46.001ms` p95; no transport primary or technical fallback is selected.
 - Product implementation remains blocked by the unresolved virtual-camera architecture; the face-model gate is resolved.
 
 ## Documentation Rules / 文档规则

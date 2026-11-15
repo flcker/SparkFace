@@ -47,9 +47,9 @@ a new name.
 
 Wave 1 executed the user-mode external-producer, GPU cross-adapter, activation-topology, compressed-subtype, shared-buffer, and reduced-mode probes. None passed the unchanged complete 1080p30 selection gates, so evidence PR [#13](https://github.com/flcker/SparkFace/pull/13) retained a no-selection verdict.
 
-The later S1 source-local candidate passed its 1,000-frame automated gate at `30.271fps` and `12.415ms` render-to-client p95 with zero sequence, marker, or pre-Frame-Server full-frame-copy errors. Its H9 productization gate and the available OBS and Tencent Meeting subset also passed in evidence PR [#18](https://github.com/flcker/SparkFace/pull/18). S1 remains unselected because the complete H5 application matrix, H6 recovery matrix, and H8 physical-camera plus face/beauty integration gate have not passed.
+The later S1 deterministic source-local candidate passed its 1,000-frame automated gate at `30.271fps` and `12.415ms` render-to-client p95 with zero sequence, marker, or pre-Frame-Server full-frame-copy errors. H9 protocol-v2 productization and the available OBS and Tencent Meeting subset also passed in evidence PR [#18](https://github.com/flcker/SparkFace/pull/18).
 
-Spike C subsequently selected fixed-batch BlazeFace plus 468-point Face Mesh in evidence PR [#19](https://github.com/flcker/SparkFace/pull/19), resolving the independent model gate without proving the S1 integrated pipeline.
+H8A then exercised the required physical-camera boundary in evidence PR [#22](https://github.com/flcker/SparkFace/pull/22). Camera initialization and one allocator-owned GPU conversion succeeded, but sustained reads hit `DXGI_ERROR_DEVICE_REMOVED` plus timeouts, the 45-second watchdog, or Frame Server service exception `0x80070428`. S1 is therefore NO-GO, not an incomplete candidate. Spike C independently selected fixed-batch BlazeFace plus 468-point Face Mesh in evidence PR [#19](https://github.com/flcker/SparkFace/pull/19), but no viable camera path remains for the integrated workload.
 
 A renamed handle, different namespace, keyed mutex/fence swap, or duplicated
 D3D11 handle does not change Spike D's adapter mismatch and is not a new
@@ -303,9 +303,9 @@ Only candidates passing Stages 1–5 run:
 - the minimal integrated face/beauty workload;
 - the same 1,000-frame, recovery, and soak gates with that workload.
 
-Transport-only headroom is not a product pass. Spike C now supplies a selected
-fixed-batch model path, but H8 still requires an integrated physical-camera,
-face-ML, and representative beauty workload to pass the end-to-end gates.
+Transport-only headroom is not a product pass. Spike C supplies a selected
+fixed-batch model path, but H8A rejected the prerequisite source-local
+physical-camera path before face ML or representative beauty could be integrated.
 
 ## 6. Efficient execution order
 
@@ -348,6 +348,9 @@ H8 is the separate product-readiness gate. Spike C now satisfies its independent
 model-selection gate, but only an integrated physical-camera, face-ML, and
 representative beauty run can satisfy H8. A score cannot override a hard-gate
 failure.
+
+The executed H8A result leaves no eligible source-local candidate. Combined
+with G1's `46.001ms` p95 failure, no primary or technical fallback survives.
 
 ### 7.2 Ranking eligible candidates
 

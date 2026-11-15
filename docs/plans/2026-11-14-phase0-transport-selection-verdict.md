@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-14  
 **Verdict:** **NO-GO — no transport selected**  
-**Evidence:** [PR #13](https://github.com/flcker/SparkFace/pull/13), retained on the `spikes` branch under `spikes/transport-selection/`
+**Evidence:** [PR #13](https://github.com/flcker/SparkFace/pull/13), [PR #18](https://github.com/flcker/SparkFace/pull/18), and [PR #22](https://github.com/flcker/SparkFace/pull/22), retained on the `spikes` branch under `spikes/transport-selection/`
 
 ## Unchanged product gate
 
@@ -38,6 +38,19 @@ custom `IMFMediaBuffer`/`IMF2DBuffer2` without requesting a contiguous-copy
 path. It still missed both unchanged product gates. The 0.128ms latency miss of
 the source-owned mode is a hard-gate failure, not rounding headroom.
 
+## Source-local follow-up
+
+S1 deterministic source-local rendering later passed 1,000 frames at
+30.271fps and 12.415ms render-to-client p95, and H9 protocol-v2 productization
+passed its security, restart, side-by-side deployment, and cleanup gates.
+
+H8A rejected the actual physical-camera boundary. The selected camera and GPU
+path initialized and one allocator-owned conversion completed, but sustained
+reads produced `DXGI_ERROR_DEVICE_REMOVED` plus timeouts, a 45-second watchdog,
+or Frame Server service exception `0x80070428`. A two-frame diagnostic reached
+only 2.391fps and both frames failed the physical-content gate. Full detail:
+[H8A source-local physical-camera capture](2026-11-15-phase0-source-local-physical-camera.md).
+
 ## Selection
 
 - **Transport primary:** none.
@@ -45,14 +58,14 @@ the source-owned mode is a hard-gate failure, not rounding headroom.
 - **Product fallback:** none accepted.
 - **Product readiness:** blocked.
 
-Recovery, real-application, soak, and integrated face/beauty checks were not run
-because no candidate survived its preceding hard gate. Spike C also remains
-NO-GO without a face model meeting its independent DirectML latency gate.
+Recovery, real-application, and soak checks were not run for H8A because its
+automated physical-camera kill gate failed. Spike C independently selected its
+face-model path, but no viable camera transport remains for integration.
 
 ## Consequence
 
 The detailed v1 implementation plan remains blocked. Proceeding requires an
 explicit product or architecture decision that changes a failed constraint,
-followed by retained evidence for the revised candidate. Examples include an
-accepted reduced mode, a driver or proprietary SDK, an external OBS bridge, or
-a larger source-local redesign; none is authorized or selected by this verdict.
+followed by retained end-to-end evidence for the revised path. Examples include
+an accepted reduced mode, a driver or proprietary SDK, or an external OBS
+bridge; none is authorized or selected by this verdict.
