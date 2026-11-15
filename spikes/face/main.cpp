@@ -1,3 +1,4 @@
+#include "detector.h"
 #include "landmarks.h"
 #include "preprocess.h"
 
@@ -40,6 +41,7 @@ class Failure final : public std::runtime_error {
 
 struct Config {
     std::filesystem::path model_path;
+    std::optional<std::filesystem::path> detector_model_path;
     std::filesystem::path image_path;
     std::uint32_t input_width{};
     std::uint32_t input_height{};
@@ -205,8 +207,8 @@ void print_usage() {
                  "--layout nchw|nhwc --channel-order rgb|bgr --scale F|F,F,F --bias F|F,F,F "
                  "--landmark-count N --dimensions N --coordinate-mode "
                  "normalized-zero-one|normalized-minus-one-one|input-pixels [options]\n"
-                 "options: --warmup N (default 10) --frames N (default 100) --max-p95-ms F "
-                 "(default 8) --overlay PATH --input-index N --output-index N\n";
+                 "options: --detector-model PATH --warmup N (default 10) --frames N (default 100) "
+                 "--max-p95-ms F (default 8) --overlay PATH --input-index N --output-index N\n";
 }
 
 Config parse_arguments(const int argc, char* argv[]) {
@@ -223,6 +225,9 @@ Config parse_arguments(const int argc, char* argv[]) {
             config.model_path = std::filesystem::path(
                 std::string(require_value(argc, argv, index, "missing_model")));
             required.model = true;
+        } else if (option == "--detector-model") {
+            config.detector_model_path = std::filesystem::path(
+                std::string(require_value(argc, argv, index, "missing_detector_model")));
         } else if (option == "--image") {
             config.image_path = std::filesystem::path(
                 std::string(require_value(argc, argv, index, "missing_image")));
@@ -464,6 +469,248 @@ void print_profile(const Config& config) {
               << "max_p95_ms=" << config.max_p95_ms << '\n';
 }
 
+int run_pipeline(const Config& config, const SfImage& image) {
+    constexpr std::size_t kDetectorInputSize = 128;
+    constexpr std::size_t kLandmarkInputSize = 192;
+    constexpr std::size_t kLandmarkCount     = 468;
+    if (!config.detector_model_path.has_value() ||
+        !std::filesystem::is_regular_file(*config.detector_model_path)) {
+        fail("detector_model_not_found");
+    }
+    if (config.input_width != kLandmarkInputSize || config.input_height != kLandmarkInputSize ||
+        config.layout != SfTensorLayout::nchw || config.bgr ||
+        config.landmark_count != kLandmarkCount || config.dimensions != 3 ||
+        config.coordinate_mode != SfCoordinateMode::input_pixels || config.input_index != 0 ||
+        config.output_index != 0) {
+        fail("pipeline_requires_face_mesh_468_profile");
+    }
+
+    Ort::Env environment(ORT_LOGGING_LEVEL_WARNING, "sparkface-face-pipeline-spike");
+    Ort::SessionOptions detector_options;
+    detector_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    detector_options.DisableMemPattern();
+    detector_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    detector_options.AddFreeDimensionOverrideByName("batch", 1);
+    Ort::SessionOptions landmark_options;
+    landmark_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    landmark_options.DisableMemPattern();
+    landmark_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    landmark_options.AddFreeDimensionOverrideByName("N", 1);
+    try {
+        Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(detector_options, 0));
+        Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(landmark_options, 0));
+    } catch (const Ort::Exception&) {
+        fail("directml_provider_setup_failed");
+    }
+
+    Ort::Session detector_session{nullptr};
+    Ort::Session landmark_session{nullptr};
+    try {
+        detector_session =
+            Ort::Session(environment, config.detector_model_path->c_str(), detector_options);
+        landmark_session = Ort::Session(environment, config.model_path.c_str(), landmark_options);
+    } catch (const Ort::Exception&) {
+        fail("pipeline_session_creation_failed");
+    }
+
+    constexpr std::array<std::int64_t, 4> detector_input_shape{1, 3, 128, 128};
+    constexpr std::array<std::int64_t, 3> detector_regressor_shape{1, 896, 16};
+    constexpr std::array<std::int64_t, 3> detector_score_shape{1, 896, 1};
+    constexpr std::array<std::int64_t, 4> landmark_input_shape{1, 3, 192, 192};
+    constexpr std::array<std::int64_t, 3> landmark_output_shape{1, 468, 3};
+    constexpr std::array<std::int64_t, 2> landmark_score_shape{1, 1};
+    const auto shape_matches = [](const std::vector<std::int64_t>& actual, const auto& expected) {
+        if (actual.size() != expected.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < actual.size(); ++index) {
+            if (actual[index] > 0 && actual[index] != expected[index]) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    Ort::AllocatorWithDefaultOptions allocator;
+    std::string detector_input_name;
+    std::array<std::string, 2> detector_output_names;
+    std::string landmark_input_name;
+    std::array<std::string, 2> landmark_output_names;
+    try {
+        if (detector_session.GetInputCount() != 1 || detector_session.GetOutputCount() != 2 ||
+            landmark_session.GetInputCount() != 1 || landmark_session.GetOutputCount() != 2 ||
+            !shape_matches(
+                detector_session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+                detector_input_shape) ||
+            !shape_matches(
+                detector_session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+                detector_regressor_shape) ||
+            !shape_matches(
+                detector_session.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape(),
+                detector_score_shape) ||
+            !shape_matches(
+                landmark_session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+                landmark_input_shape) ||
+            !shape_matches(
+                landmark_session.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape(),
+                landmark_output_shape) ||
+            !shape_matches(
+                landmark_session.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape(),
+                landmark_score_shape)) {
+            fail("pipeline_model_shape_mismatch");
+        }
+        detector_input_name      = detector_session.GetInputNameAllocated(0, allocator).get();
+        detector_output_names[0] = detector_session.GetOutputNameAllocated(0, allocator).get();
+        detector_output_names[1] = detector_session.GetOutputNameAllocated(1, allocator).get();
+        landmark_input_name      = landmark_session.GetInputNameAllocated(0, allocator).get();
+        landmark_output_names[0] = landmark_session.GetOutputNameAllocated(0, allocator).get();
+        landmark_output_names[1] = landmark_session.GetOutputNameAllocated(1, allocator).get();
+    } catch (const Ort::Exception&) {
+        fail("pipeline_model_metadata_failed");
+    }
+
+    std::vector<float> detector_input(kDetectorInputSize * kDetectorInputSize * 3);
+    std::vector<float> detector_regressors(SF_FACE_ANCHOR_COUNT * SF_FACE_REGRESSOR_COUNT);
+    std::vector<float> detector_scores(SF_FACE_ANCHOR_COUNT);
+    std::vector<float> landmark_input(kLandmarkInputSize * kLandmarkInputSize * 3);
+    std::vector<float> landmark_output(kLandmarkCount * 3);
+    std::vector<float> landmark_score(1);
+    std::vector<SfLandmark> mapped_landmarks(kLandmarkCount);
+    SfDetectorScratch detector_scratch;
+    detector_scratch.candidates.reserve(SF_FACE_ANCHOR_COUNT);
+    const auto anchors = sf_generate_face_anchors();
+    SfFaceRoi last_roi{};
+
+    const Ort::MemoryInfo memory_info =
+        Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::Value detector_input_tensor =
+        Ort::Value::CreateTensor<float>(memory_info, detector_input.data(), detector_input.size(),
+                                        detector_input_shape.data(), detector_input_shape.size());
+    std::array<Ort::Value, 2> detector_output_tensors{
+        Ort::Value::CreateTensor<float>(memory_info, detector_regressors.data(),
+                                        detector_regressors.size(), detector_regressor_shape.data(),
+                                        detector_regressor_shape.size()),
+        Ort::Value::CreateTensor<float>(memory_info, detector_scores.data(), detector_scores.size(),
+                                        detector_score_shape.data(), detector_score_shape.size())};
+    Ort::Value landmark_input_tensor =
+        Ort::Value::CreateTensor<float>(memory_info, landmark_input.data(), landmark_input.size(),
+                                        landmark_input_shape.data(), landmark_input_shape.size());
+    std::array<Ort::Value, 2> landmark_output_tensors{
+        Ort::Value::CreateTensor<float>(memory_info, landmark_output.data(), landmark_output.size(),
+                                        landmark_output_shape.data(), landmark_output_shape.size()),
+        Ort::Value::CreateTensor<float>(memory_info, landmark_score.data(), landmark_score.size(),
+                                        landmark_score_shape.data(), landmark_score_shape.size())};
+    const char* const detector_input_name_ptr = detector_input_name.c_str();
+    const std::array<const char*, 2> detector_output_name_ptrs{detector_output_names[0].c_str(),
+                                                               detector_output_names[1].c_str()};
+    const char* const landmark_input_name_ptr = landmark_input_name.c_str();
+    const std::array<const char*, 2> landmark_output_name_ptrs{landmark_output_names[0].c_str(),
+                                                               landmark_output_names[1].c_str()};
+    Ort::RunOptions run_options{nullptr};
+
+    const auto run_frame = [&]() {
+        sf_preprocess_detector(image, detector_input);
+        detector_session.Run(run_options, &detector_input_name_ptr, &detector_input_tensor, 1,
+                             detector_output_name_ptrs.data(), detector_output_tensors.data(),
+                             detector_output_tensors.size());
+        if (!sf_decode_face_roi(detector_regressors.data(), detector_regressors.size(),
+                                detector_scores.data(), detector_scores.size(), anchors, image,
+                                detector_scratch, last_roi)) {
+            fail("pipeline_face_not_detected");
+        }
+        sf_preprocess_face_roi(image, last_roi, kLandmarkInputSize, landmark_input);
+        landmark_session.Run(run_options, &landmark_input_name_ptr, &landmark_input_tensor, 1,
+                             landmark_output_name_ptrs.data(), landmark_output_tensors.data(),
+                             landmark_output_tensors.size());
+        sf_map_face_landmarks(landmark_output.data(), landmark_output.size(), last_roi,
+                              kLandmarkInputSize, image, mapped_landmarks);
+        return values_are_finite(detector_regressors) && values_are_finite(detector_scores) &&
+               values_are_finite(landmark_output) && values_are_finite(landmark_score);
+    };
+
+    try {
+        for (std::size_t frame = 0; frame < config.warmup_count; ++frame) {
+            if (!run_frame()) {
+                fail("non_finite_pipeline_warmup_output");
+            }
+        }
+    } catch (const Ort::Exception&) {
+        fail("pipeline_inference_failed");
+    } catch (const Failure&) {
+        throw;
+    } catch (const std::exception&) {
+        fail("pipeline_processing_failed");
+    }
+
+    const double frequency = qpc_frequency();
+    std::vector<double> frame_times_ms;
+    frame_times_ms.reserve(config.frame_count);
+    bool finite_outputs = true;
+    try {
+        for (std::size_t frame = 0; frame < config.frame_count; ++frame) {
+            const std::int64_t start = qpc_now();
+            finite_outputs           = run_frame() && finite_outputs;
+            const std::int64_t stop  = qpc_now();
+            if (stop < start) {
+                fail("qpc_clock_invalid");
+            }
+            frame_times_ms.push_back(static_cast<double>(stop - start) * 1000.0 / frequency);
+        }
+    } catch (const Ort::Exception&) {
+        fail("pipeline_inference_failed");
+    } catch (const Failure&) {
+        throw;
+    } catch (const std::exception&) {
+        fail("pipeline_processing_failed");
+    }
+
+    const double p50_ms = percentile_ms(frame_times_ms, 50, 100);
+    const double p95_ms = percentile_ms(frame_times_ms, 95, 100);
+    const double p99_ms = percentile_ms(frame_times_ms, 99, 100);
+    const double max_ms = *std::max_element(frame_times_ms.begin(), frame_times_ms.end());
+    const std::size_t frames_over_budget = static_cast<std::size_t>(std::count_if(
+        frame_times_ms.begin(), frame_times_ms.end(),
+        [&config](const double elapsed_ms) { return elapsed_ms > config.max_p95_ms; }));
+    if (config.overlay_path.has_value()) {
+        try {
+            sf_write_overlay_ppm(image, mapped_landmarks, *config.overlay_path);
+        } catch (const std::exception&) {
+            fail("pipeline_overlay_write_failed");
+        }
+    }
+
+    const double landmark_presence =
+        1.0 / (1.0 + std::exp(-static_cast<double>(landmark_score.front())));
+    std::cout << "provider=DmlExecutionProvider\n"
+              << "ort_dml_version=" << SF_ORT_DML_VERSION << '\n'
+              << "pipeline=blazeface-face-mesh-468\n"
+              << "detector_model_path=" << config.detector_model_path->generic_string() << '\n'
+              << "model_path=" << config.model_path.generic_string() << '\n'
+              << "image_path=" << config.image_path.generic_string() << '\n'
+              << "detector_free_dimension_override_batch=1\n"
+              << "landmark_free_dimension_override_N=1\n"
+              << "warmup_frames=" << config.warmup_count << '\n'
+              << "measured_frames_requested=" << config.frame_count << '\n'
+              << "max_p95_ms=" << config.max_p95_ms << '\n'
+              << std::fixed << std::setprecision(6) << "detector_score=" << last_roi.detection_score
+              << '\n'
+              << "landmark_presence_score=" << landmark_presence << '\n'
+              << "p50_ms=" << p50_ms << '\n'
+              << "p95_ms=" << p95_ms << '\n'
+              << "p99_ms=" << p99_ms << '\n'
+              << "max_ms=" << max_ms << '\n'
+              << "frames_over_budget=" << frames_over_budget << '\n'
+              << "working_set_peak_bytes=" << peak_working_set_bytes() << '\n'
+              << "measured_frames_completed=" << frame_times_ms.size() << '\n'
+              << "finite_outputs=" << (finite_outputs ? 1 : 0) << '\n'
+              << "p95_gate_pass=" << (p95_ms <= config.max_p95_ms ? 1 : 0) << '\n';
+    const bool pass = finite_outputs && frame_times_ms.size() == config.frame_count &&
+                      last_roi.detection_score >= 0.5F && landmark_presence >= 0.5 &&
+                      p95_ms <= config.max_p95_ms;
+    std::cout << (pass ? "FACE_PIPELINE_SPIKE_PASS\n" : "FACE_PIPELINE_SPIKE_FAIL\n");
+    return pass ? 0 : 2;
+}
+
 int run(const Config& config) {
     if (!std::filesystem::is_regular_file(config.model_path)) {
         fail("model_not_found");
@@ -481,6 +728,9 @@ int run(const Config& config) {
         image = sf_load_ppm(config.image_path);
     } catch (const std::exception&) {
         fail("image_load_failed");
+    }
+    if (config.detector_model_path.has_value()) {
+        return run_pipeline(config, image);
     }
 
     const SfPreprocessSpec preprocess_spec{config.input_width, config.input_height, config.layout,
@@ -504,6 +754,8 @@ int run(const Config& config) {
     options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
     options.DisableMemPattern();
     options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    options.AddFreeDimensionOverrideByName("N", 1);
+    options.AddFreeDimensionOverrideByName("batch", 1);
     try {
         Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(options, 0));
     } catch (const Ort::Exception&) {
@@ -611,7 +863,10 @@ int run(const Config& config) {
     const double p95_ms = percentile_ms(frame_times_ms, 95, 100);
     const double p99_ms = percentile_ms(frame_times_ms, 99, 100);
     const double max_ms = *std::max_element(frame_times_ms.begin(), frame_times_ms.end());
-    const std::size_t peak_working_set = peak_working_set_bytes();
+    const std::size_t frames_over_budget = static_cast<std::size_t>(std::count_if(
+        frame_times_ms.begin(), frame_times_ms.end(),
+        [&config](const double elapsed_ms) { return elapsed_ms > config.max_p95_ms; }));
+    const std::size_t peak_working_set   = peak_working_set_bytes();
 
     std::vector<SfLandmark> landmarks;
     try {
@@ -633,10 +888,13 @@ int run(const Config& config) {
     }
 
     print_profile(config);
-    std::cout << std::fixed << std::setprecision(6) << "p50_ms=" << p50_ms << '\n'
+    std::cout << "free_dimension_override_N=1\n"
+              << "free_dimension_override_batch=1\n"
+              << std::fixed << std::setprecision(6) << "p50_ms=" << p50_ms << '\n'
               << "p95_ms=" << p95_ms << '\n'
               << "p99_ms=" << p99_ms << '\n'
               << "max_ms=" << max_ms << '\n'
+              << "frames_over_budget=" << frames_over_budget << '\n'
               << "working_set_peak_bytes=" << peak_working_set << '\n'
               << "measured_frames_completed=" << frame_times_ms.size() << '\n'
               << "finite_outputs=" << (finite_outputs ? 1 : 0) << '\n'
