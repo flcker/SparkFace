@@ -2,15 +2,18 @@
 
 ## Verdict
 
-**NO-GO: reject physical-camera capture from the Frame Server-hosted custom
-media source.** The source initialized the exact selected camera and completed
-an initial allocator-owned GPU conversion, but it could not sustain recursive
-camera reads in the Frame Server process.
+**NO-GO: reject the measured Frame Server-hosted physical-camera path on
+throughput and latency.** The corrected source sustained 1,000 contiguous
+physical-camera frames through allocator-owned GPU conversion with zero
+sequence, marker, physical-content, or pre-Frame-Server CPU-copy errors. It
+reached only 29.327fps and 50.167ms capture-to-client p95 against the unchanged
+29.5fps and 33.3ms gates.
 
 Executable evidence is retained on `spikes` under
-`spikes/transport-selection/` by
-[evidence PR #22](https://github.com/flcker/SparkFace/pull/22). The probe and
-build changes remain evidence-only and do not enter `main`.
+`spikes/transport-selection/`. [Evidence PR #22](https://github.com/flcker/SparkFace/pull/22)
+contains the original probe and [RCA evidence PR #24](https://github.com/flcker/SparkFace/pull/24)
+corrects its causal diagnosis. Probe and build changes remain evidence-only and
+do not enter `main`.
 
 ## Unchanged gate
 
@@ -27,7 +30,7 @@ produce NV12 1920×1080 at 30fps for one active consumer with:
 No CPU fallback, reduced mode, external bridge, or different product contract
 was accepted for this gate.
 
-## Tested boundary
+## Corrected boundary
 
 H9 control protocol v2 publishes the exact Media Foundation physical-camera
 symbolic link from the interactive session. The LocalService media source
@@ -35,36 +38,42 @@ excludes the SparkFace virtual camera, creates the camera Source Reader on the
 allocator D3D11 adapter, requires GPU-backed BGRA samples, overlays the retained
 marker, and converts directly into allocator-owned NV12.
 
-The final probe used one bounded MTA capture thread. This removed the initial
-work-queue dependency between media-source delivery and asynchronous camera
-callbacks. A single in-flight sample prevented unbounded buffering and added no
-per-frame thread or heap allocation. CPU-backed samples and adapter mismatch
-remained hard failures.
+The RCA separated standalone capture, capture-only, GPU-copy-only, and full
+media-source stages. It found that the original probe released each Media
+Foundation sample before the asynchronous D3D11 copy completed. Retaining the
+sample and texture until a copy-completion query succeeds removed the historical
+device-removal, service-exception, and watchdog symptoms. The probe also
+retained capture across one transient live-producer heartbeat lapse, published
+heartbeats on an above-normal-priority thread, and corrected a physical-content
+test that rejected the measured low-contrast camera scene.
+
+These were probe lifetime, scheduling, and validation defects. They were not
+evidence of a fundamental recursive physical-camera limitation.
 
 ## Measured result
 
 | Run | Observed result | Gate |
 | --- | --- | --- |
-| H9 protocol-v2 regression, six 120-frame scenarios | 30.195–30.374fps; 10.337–12.341ms p95; zero sequence, marker, or pre-Frame-Server copy errors | Pass |
-| H8A final 120-frame kill gate | Camera initialization `S_OK`; protocol v2 and first GPU conversion observed; then `DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`), repeated `WAIT_TIMEOUT` (`0x80070102`), and the 45-second watchdog | Fail |
-| H8A alternate strict reruns | Consumer received Frame Server service exception `0x80070428` | Fail |
-| H8A two-frame diagnostic | 2/2 frames at 2.391fps; 17.643ms p95; 2 physical-content errors; zero marker or sequence errors; zero pre-Frame-Server full-frame CPU copies | Fail |
+| Standalone physical-camera capture | 1,000 frames at 29.525fps; zero skipped sequences; device-removal reason `S_OK`; sampled luma range 3–11 | Pass |
+| Frame Server capture-only stage | 1,000 frames at 29.334fps; 52.279ms p95; zero skipped or duplicate sequences | Diagnostic pass |
+| Frame Server GPU-copy-only stage | 1,000 frames at 29.338fps; 52.260ms p95; zero skipped or duplicate sequences | Diagnostic pass |
+| Frame Server full diagnostic stage | 1,000 frames at 29.356fps; 50.662ms p95; zero skipped, duplicate, or physical-content errors | Diagnostic pass |
+| H8A final strict gate | 1,000 frames at 29.327fps; 50.167ms p95; zero skipped, duplicate, marker, physical-content, or pre-Frame-Server CPU-copy errors | Fail: fps and p95 |
+| H9 protocol-v2 regression, six 120-frame scenarios | 30.295–30.447fps; 10.803–12.452ms p95; zero sequence, duplicate, marker, or pre-Frame-Server copy errors | Pass |
 
-The different terminal symptoms share the same boundary: capture starts inside
-the Frame Server host but does not remain a valid 1080p30 physical-camera
-stream. The first conversion is not a first-frame architecture pass because the
-next reads either stall, remove the D3D device, or fail through the service.
-
+The final strict run completed instead of stalling. Its correctness and
+GPU-resident pre-Frame-Server path passed; its throughput and latency did not.
 Client reopen, Frame Server restart, real applications, soak, face ML, and
-beauty integration were not run after the kill gate failed.
+beauty integration were not run after those two kill gates failed.
 
 ## Decision
 
-S1 deterministic source-local rendering remains useful evidence that an
-allocator-owned shader can meet the transport-only budget. H8A proves that it
-does not provide a viable physical-camera input path. The external
-source-adapter handoff is not a fallback: its retained 1,000-frame result was
-30.093fps but 46.001ms producer-to-client p95 against the 33.3ms gate.
+S1 deterministic source-local rendering remains evidence that an
+allocator-owned shader can meet the transport-only budget. H8A now proves that
+physical-camera integration is functional, while also proving that this path
+does not meet the product's 1080p30 performance contract. The external
+source-adapter handoff is not a fallback: its retained result also exceeded the
+33.3ms latency gate at 46.001ms p95.
 
 Therefore:
 
