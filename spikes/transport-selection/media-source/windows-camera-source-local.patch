@@ -197,10 +197,11 @@ diff --git a/VirtualCameraMediaSource/SimpleMediaSource.cpp b/VirtualCameraMedia
 diff --git a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
 --- a/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
 +++ b/VirtualCameraMediaSource/VirtualCameraMediaSource.vcxproj
-@@ -63,6 +63,7 @@
+@@ -63,6 +63,8 @@
      <ClInclude Include="CompressedFrameSource.h" />
      <ClInclude Include="SharedMemorySampleSource.h" />
      <ClInclude Include="SharedRingProtocol.h" />
++    <ClInclude Include="PhysicalCameraCapture.h" />
 +    <ClInclude Include="SourceLocalRenderer.h" />
      <ClInclude Include="HWMediaSource.h" />
      <ClInclude Include="HWMediaStream.h" />

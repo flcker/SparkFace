@@ -2,8 +2,9 @@
 #pragma once
 
 // This probe-only renderer runs inside the Media Foundation source process. It
-// renders a deterministic BGRA marker frame on the allocator's D3D11 device and
-// converts it directly into the allocator-owned NV12 sample.
+// either renders the retained deterministic marker frame or captures a selected
+// physical camera on the allocator D3D11 device, overlays the marker, and
+// converts directly into the allocator-owned NV12 sample.
 
 #include <Windows.h>
 #include <d3d11_4.h>
@@ -19,6 +20,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "PhysicalCameraCapture.h"
 #include "control_protocol.h"
 #pragma comment(lib, "d3d11")
 #pragma comment(lib, "d3dcompiler")
@@ -93,8 +95,7 @@ class Renderer final {
         Microsoft::WRL::ComPtr<IMFDXGIBuffer> dxgiBuffer;
         RETURN_IF_FAILED(mediaBuffer.As(&dxgiBuffer));
         Microsoft::WRL::ComPtr<ID3D11Texture2D> outputTexture;
-        RETURN_IF_FAILED(dxgiBuffer->GetResource(
-            IID_PPV_ARGS(&outputTexture)));
+        RETURN_IF_FAILED(dxgiBuffer->GetResource(IID_PPV_ARGS(&outputTexture)));
         UINT outputSubresource = 0;
         RETURN_IF_FAILED(dxgiBuffer->GetSubresourceIndex(&outputSubresource));
 
@@ -104,13 +105,29 @@ class Renderer final {
                      outputDescription.Format != DXGI_FORMAT_NV12 ||
                          outputDescription.Width == 0 ||
                          outputDescription.Height == 0);
-        RETURN_IF_FAILED(EnsurePipeline(outputTexture.Get(), outputDescription));
 
-        LARGE_INTEGER qpc{};
-        RETURN_LAST_ERROR_IF(!QueryPerformanceCounter(&qpc));
-        const std::uint64_t sequence = conversionCount_ + 1;
-        const ControlState control = ReadControl(qpc.QuadPart);
-        RETURN_IF_FAILED(RenderBgra(sequence, qpc.QuadPart, control));
+        LARGE_INTEGER now{};
+        RETURN_LAST_ERROR_IF(!QueryPerformanceCounter(&now));
+        const ControlState control = ReadControl(now.QuadPart);
+        RETURN_IF_FAILED(EnsurePipeline(outputTexture.Get(), outputDescription));
+        RETURN_IF_FAILED(PreparePhysicalCamera(control));
+
+        std::uint64_t sequence = conversionCount_ + 1;
+        std::int64_t markerQpc = now.QuadPart;
+        if (control.physicalCamera) {
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> capturedTexture;
+            UINT capturedSubresource = 0;
+            const HRESULT captureResult = physicalCapture_.AcquireNext(
+                &capturedTexture, &capturedSubresource, &sequence, &markerQpc);
+            if (captureResult == E_PENDING) {
+                return S_OK;
+            }
+            RETURN_IF_FAILED(captureResult);
+            context_->CopySubresourceRegion(renderTexture_.Get(), 0, 0, 0, 0,
+                                            capturedTexture.Get(),
+                                            capturedSubresource, nullptr);
+        }
+        RETURN_IF_FAILED(RenderBgra(sequence, markerQpc, control));
         RETURN_IF_FAILED(ConvertToAllocatorTexture(
             outputTexture.Get(), outputDescription, outputSubresource));
         context_->Flush();
@@ -136,7 +153,8 @@ class Renderer final {
         std::uint32_t controlRevision;
         std::uint32_t controlEffectValue;
         std::uint32_t controlStatus;
-        std::array<std::uint32_t, 3> padding{};
+        std::uint32_t physicalCamera;
+        std::array<std::uint32_t, 2> padding{};
     };
     static_assert(sizeof(MarkerConstants) % 16 == 0);
 
@@ -145,6 +163,11 @@ class Renderer final {
         std::uint32_t effectValue = 0;
         SparkFaceSourceLocalControl::Status status =
             SparkFaceSourceLocalControl::Status::Disabled;
+        bool physicalCamera = false;
+        std::uint32_t cameraSymbolicLinkLength = 0;
+        std::array<wchar_t,
+                   SparkFaceSourceLocalControl::CameraSymbolicLinkCapacity>
+            cameraSymbolicLink{};
     };
 
     struct OutputViewEntry {
@@ -177,7 +200,8 @@ cbuffer Marker : register(b0) {
     uint control_revision;
     uint control_effect_value;
     uint control_status;
-    uint3 padding;
+    uint physical_camera;
+    uint2 padding;
 };
 uint marker_bit(uint index) {
     if (index < 16) return (0xD311u >> index) & 1u;
@@ -204,6 +228,7 @@ float4 main(float4 position : SV_Position) : SV_Target {
         float value = marker_bit(bit) != 0u ? 1.0 : 0.0;
         return float4(value, value, value, 1.0);
     }
+    if (physical_camera != 0u) discard;
     float2 uv = position.xy / float2(1920.0, 1080.0);
     float phase = (float)(frame % 300u) / 300.0;
     float effect = (float)control_effect_value / 100.0;
@@ -315,17 +340,30 @@ float4 main(float4 position : SV_Position) : SV_Target {
             TraceH9Status(state.status, 0, 0);
             return state;
         }
-        const LONG sequence = ReadAcquire(&controlView_->publicationSequence);
-        if ((sequence & 1) != 0) {
-            state.status = SparkFaceSourceLocalControl::Status::PublicationBusy;
-            TraceH9Status(state.status, 0, 0);
-            return state;
-        }
         SparkFaceSourceLocalControl::Snapshot snapshot{};
-        if (!SparkFaceSourceLocalControl::ReadSnapshot(controlView_, &snapshot)) {
-            state.status = SparkFaceSourceLocalControl::Status::ProtocolInvalid;
-            TraceH9Status(state.status, 0, 0);
-            return state;
+        bool snapshotRead = false;
+        for (std::uint32_t attempt = 0; attempt < 8; ++attempt) {
+            if (SparkFaceSourceLocalControl::ReadSnapshot(controlView_,
+                                                          &snapshot)) {
+                snapshotRead = true;
+                break;
+            }
+            YieldProcessor();
+        }
+        if (snapshotRead) {
+            lastControlSnapshot_ = snapshot;
+            hasLastControlSnapshot_ = true;
+        } else {
+            const LONG sequence = ReadAcquire(&controlView_->publicationSequence);
+            if ((sequence & 1) != 0 && hasLastControlSnapshot_) {
+                snapshot = lastControlSnapshot_;
+            } else {
+                state.status = (sequence & 1) != 0
+                                   ? SparkFaceSourceLocalControl::Status::PublicationBusy
+                                   : SparkFaceSourceLocalControl::Status::ProtocolInvalid;
+                TraceH9Status(state.status, 0, 0);
+                return state;
+            }
         }
         if (snapshot.revision == 0) {
             state.status = SparkFaceSourceLocalControl::Status::ProtocolInvalid;
@@ -368,8 +406,58 @@ float4 main(float4 position : SV_Position) : SV_Target {
         state.revision = snapshot.revision;
         state.effectValue = snapshot.effectValue;
         state.status = SparkFaceSourceLocalControl::Status::Applied;
+        state.physicalCamera =
+            SparkFaceSourceLocalControl::IsPhysicalCameraEnabled(snapshot);
+        state.cameraSymbolicLinkLength = snapshot.cameraSymbolicLinkLength;
+        state.cameraSymbolicLink = snapshot.cameraSymbolicLink;
         TraceH9Status(state.status, state.revision, state.effectValue);
         return state;
+    }
+
+    static std::uint32_t CameraSelectionHash(const ControlState& control) {
+        std::uint32_t hash = 2166136261U;
+        for (std::uint32_t index = 0;
+             index < control.cameraSymbolicLinkLength; ++index) {
+            const std::uint16_t value =
+                static_cast<std::uint16_t>(control.cameraSymbolicLink[index]);
+            hash ^= value & 0xFFU;
+            hash *= 16777619U;
+            hash ^= value >> 8;
+            hash *= 16777619U;
+        }
+        return hash;
+    }
+
+    HRESULT PreparePhysicalCamera(const ControlState& control) {
+        if (!control.physicalCamera ||
+            control.status != SparkFaceSourceLocalControl::Status::Applied) {
+            if (physicalCameraInitialized_) {
+                physicalCapture_.Shutdown();
+                physicalCameraInitialized_ = false;
+                physicalCameraSelectionHash_ = 0;
+            }
+            return S_OK;
+        }
+        const std::uint32_t selectionHash = CameraSelectionHash(control);
+        if (physicalCameraInitialized_ &&
+            selectionHash == physicalCameraSelectionHash_) {
+            return S_OK;
+        }
+        physicalCapture_.Shutdown();
+        physicalCameraInitialized_ = false;
+        RETURN_IF_FAILED(physicalCapture_.Initialize(
+            device_.Get(), control.cameraSymbolicLink.data(),
+            control.cameraSymbolicLinkLength, width_, height_, 30));
+        physicalCameraInitialized_ = true;
+        physicalCameraSelectionHash_ = selectionHash;
+        const LUID luid = physicalCapture_.allocator_luid();
+        char message[160]{};
+        sprintf_s(message,
+                  "physical_camera_protocol=2 symbolic_link_hash=%08x adapter_luid=%08lx:%08lx",
+                  selectionHash, static_cast<unsigned long>(luid.HighPart),
+                  static_cast<unsigned long>(luid.LowPart));
+        Trace(message);
+        return S_OK;
     }
 
     HRESULT CompileShader(const char* source, const char* target,
@@ -503,6 +591,7 @@ float4 main(float4 position : SV_Position) : SV_Target {
         constants->controlRevision = control.revision;
         constants->controlEffectValue = control.effectValue;
         constants->controlStatus = static_cast<std::uint32_t>(control.status);
+        constants->physicalCamera = control.physicalCamera ? 1U : 0U;
         context_->Unmap(constantBuffer_.Get(), 0);
 
         const D3D11_VIEWPORT viewport{
@@ -512,8 +601,7 @@ float4 main(float4 position : SV_Position) : SV_Target {
         ID3D11Buffer* constantsBuffer = constantBuffer_.Get();
         context_->OMSetRenderTargets(1, &target, nullptr);
         context_->RSSetViewports(1, &viewport);
-        context_->IASetPrimitiveTopology(
-            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
         context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
         context_->PSSetConstantBuffers(0, 1, &constantsBuffer);
@@ -585,6 +673,9 @@ float4 main(float4 position : SV_Position) : SV_Target {
     }
 
     void ResetPipeline() {
+        physicalCapture_.Shutdown();
+        physicalCameraInitialized_ = false;
+        physicalCameraSelectionHash_ = 0;
         for (auto& entry : outputViews_) {
             entry.view.Reset();
             entry.texture.Reset();
@@ -622,8 +713,13 @@ float4 main(float4 position : SV_Position) : SV_Target {
     std::uint32_t lastTraceRevision_ = static_cast<std::uint32_t>(-1);
     std::uint32_t lastTraceValue_ = static_cast<std::uint32_t>(-1);
     std::uint64_t conversionCount_ = 0;
+    SparkFaceSourceLocalControl::Snapshot lastControlSnapshot_{};
+    bool hasLastControlSnapshot_ = false;
     UINT width_ = 0;
     UINT height_ = 0;
+    bool physicalCameraInitialized_ = false;
+    std::uint32_t physicalCameraSelectionHash_ = 0;
+    PhysicalCameraCapture physicalCapture_;
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
     Microsoft::WRL::ComPtr<ID3D11VideoDevice> videoDevice_;

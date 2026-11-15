@@ -254,12 +254,13 @@ The reviewed measurement and conditional-check inventory are retained in
 
 ## S1 H9 productization gate
 
-The source-local productization runner adds a versioned shared control block
-owned by an interactive-session producer and read by the LocalService media
-source. It validates the fixed source asset before use, rejects protocol or
-asset mismatches to effect value zero, detects producer exit and stale
-heartbeats, and restricts writes to ordinary interactive users while denying
-restricted and low-integrity tokens.
+The source-local productization runner uses protocol v2: a versioned shared
+control block owned by an interactive-session producer and read by the
+LocalService media source. It carries the exact physical-camera symbolic link,
+validates the fixed source asset before use, rejects protocol or asset
+mismatches to effect value zero, detects producer exit and stale heartbeats,
+and restricts writes to ordinary interactive users while denying restricted
+and low-integrity tokens.
 
 Run the elevated H9 gate with:
 
@@ -271,12 +272,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 | Scenario | Frames | Measured fps | Render-to-client p95 | Result |
 |---|---:|---:|---:|---|
-| Normal v1 control | 120 | 30.074 | 12.008ms | `PASS` |
-| Protocol mismatch fail-safe | 120 | 29.787 | 12.241ms | `PASS` |
-| Applied-to-producer-dead transition | 120 | 30.044 | 8.793ms | `PASS` |
-| Producer recovery | 120 | 30.153 | 12.442ms | `PASS` |
-| Frame Server restart | 120 | 30.039 | 12.760ms | `PASS` |
-| Side-by-side v2 activation | 120 | 30.074 | 11.996ms | `PASS` |
+| Normal v2 control | 120 | 30.303 | 10.337ms | `PASS` |
+| Protocol mismatch fail-safe | 120 | 30.310 | 11.450ms | `PASS` |
+| Applied-to-producer-dead transition | 120 | 30.318 | 11.524ms | `PASS` |
+| Producer recovery | 120 | 30.350 | 11.721ms | `PASS` |
+| Frame Server restart | 120 | 30.195 | 11.611ms | `PASS` |
+| Side-by-side v2 activation | 120 | 30.374 | 12.341ms | `PASS` |
 
 All scenarios had zero sequence, duplicate, or marker errors and zero
 pre-Frame-Server full-frame CPU copies. The ACL probe denied restricted and
@@ -300,18 +301,55 @@ face/beauty were not tested. H9 product control, fail-safe security, restart,
 side-by-side update, and cleanup gates passed. S1 therefore remains an
 automated-pass candidate rather than a selected transport.
 
+## S1 H8A physical-camera capture
+
+H8A upgrades the source-local probe from a deterministic shader to the single
+expected `Integrated Camera`. Protocol v2 publishes its exact Media Foundation
+symbolic link. The LocalService media source excludes the SparkFace virtual
+camera, opens the selected device on the allocator D3D11 adapter, requires
+GPU-backed BGRA samples, overlays the retained marker, and converts directly
+into allocator-owned NV12. The final probe uses one bounded MTA capture thread
+so physical reads never depend on the media-source delivery work queue.
+
+Reproduce the elevated 120-frame kill gate with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File scripts/run-source-local-physical-camera.ps1 `
+  -Frames 120 -MinimumFps 29.5 -MaximumP95Ms 33.3
+```
+
+H8A is `NO-GO`. The selected camera and D3D path initialized successfully and
+one allocator-owned GPU conversion completed, but the final run then returned
+`DXGI_ERROR_DEVICE_REMOVED` (`0x887A0005`), repeatedly timed out physical reads
+with `0x80070102`, and hit the 45-second watchdog. Other strict reruns surfaced
+the Frame Server service exception `0x80070428`. A two-frame diagnostic did
+complete, but only at 2.391fps and both delivered frames failed the physical
+content gate. The recursive physical-camera path inside the Frame Server host
+therefore cannot sustain capture and does not advance to client-reopen, Frame
+Server restart, application, or soak checks.
+
+The runner treats only those reviewed kill-gate outcomes as the expected
+NO-GO, restores the previous COM registration in `finally`, and removes staged
+artifacts. Detailed evidence is retained in
+`results/source-local-physical-camera.json`.
+
 ## Final decision
 
 No tested Wave-1 app-to-source transport passed the unchanged 1080p30 gates.
 Request-credit pacing restored throughput and sequence correctness but failed
-the 33.3ms p95 latency gate. S1 avoids that transport boundary and passes the
-automated 1080p30 gate, H9 productization gate, and the available recovery,
-OBS, and Tencent Meeting subset. It is not selected because the complete H5
-application matrix, H6 recovery matrix, and H8 integrated pipeline evidence
-remain incomplete. No transport primary or technical fallback is selected.
+the 33.3ms p95 latency gate. S1 deterministic source-local rendering passed the
+automated 1080p30 gate, H9 protocol-v2 productization, and the available
+recovery, OBS, and Tencent Meeting subset. H8A then proved that recursively
+opening the physical camera from the Frame Server-hosted source is not a viable
+integrated capture path. The previously tested source-adapter handoff already
+failed at 46.001ms p95, so neither source-local nor app-to-source integration
+provides a technical fallback.
 
 Reduced-mode characterization separately retains M2 source-owned NV12
-1920×1080 at 15fps as an unaccepted product-fallback candidate. The v1
-implementation plan remains blocked. See `results/summary.json`,
+1920×1080 at 15fps as an unaccepted product-fallback candidate. No transport
+primary or technical fallback is selected, and the v1 implementation plan
+remains blocked. See `results/summary.json`,
 `results/source-local-render.json`, `results/source-local-productization.json`,
+`results/source-local-physical-camera.json`, `results/source-adapter-handoff.json`,
 `results/reduced-modes.json`, and `results/request-paced.json`.

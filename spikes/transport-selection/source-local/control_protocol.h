@@ -3,6 +3,7 @@
 
 #include <Windows.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -10,12 +11,15 @@
 namespace SparkFaceSourceLocalControl {
 
 inline constexpr wchar_t MappingName[] =
-    L"Global\\SparkFaceSourceLocalControl-v1";
+    L"Global\\SparkFaceSourceLocalControl-v2";
 inline constexpr wchar_t EnablePath[] =
     L"C:\\Users\\Public\\SparkFaceTransportSourceLocalH9.flag";
 inline constexpr wchar_t AssetName[] = L"SparkFaceSourceLocal.fixture";
 inline constexpr std::uint32_t Magic = 0x39304C48U; // H9L9
-inline constexpr std::uint16_t Version = 1;
+inline constexpr std::uint16_t Version = 2;
+inline constexpr std::uint32_t FlagPhysicalCamera = 1U << 0;
+inline constexpr std::uint32_t KnownFlags = FlagPhysicalCamera;
+inline constexpr std::size_t CameraSymbolicLinkCapacity = 512;
 inline constexpr std::uint32_t EffectMinimum = 0;
 inline constexpr std::uint32_t EffectMaximum = 100;
 inline constexpr std::uint64_t HeartbeatMaximumAgeMilliseconds = 2000;
@@ -59,11 +63,14 @@ struct ControlBlock {
     std::int64_t heartbeatQpc;
     std::uint32_t flags;
     std::uint32_t effectValue;
+    std::uint32_t cameraSymbolicLinkLength;
+    wchar_t cameraSymbolicLink[CameraSymbolicLinkCapacity];
     std::uint64_t reserved[2];
 };
 #pragma pack(pop)
 
-static_assert(sizeof(ControlBlock) == 56, "H9 protocol layout must be stable");
+static_assert(sizeof(ControlBlock) == 1088,
+              "H9 v2 protocol layout must be stable");
 static_assert(std::is_standard_layout<ControlBlock>::value,
               "H9 protocol must be standard layout");
 static_assert(std::is_trivial<ControlBlock>::value,
@@ -74,6 +81,8 @@ static_assert(offsetof(ControlBlock, heartbeatQpc) == 24,
               "H9 protocol layout must be stable");
 static_assert(offsetof(ControlBlock, effectValue) == 36,
               "H9 protocol layout must be stable");
+static_assert(offsetof(ControlBlock, cameraSymbolicLink) == 44,
+              "H9 v2 camera selection layout must be stable");
 
 struct Snapshot {
     std::uint32_t revision = 0;
@@ -81,6 +90,8 @@ struct Snapshot {
     std::int64_t heartbeatQpc = 0;
     std::uint32_t flags = 0;
     std::uint32_t effectValue = 0;
+    std::uint32_t cameraSymbolicLinkLength = 0;
+    std::array<wchar_t, CameraSymbolicLinkCapacity> cameraSymbolicLink{};
 };
 
 inline std::uint32_t AssetHashBytes(const char* bytes, std::size_t count) {
@@ -107,6 +118,10 @@ inline void Publish(ControlBlock* block, const Snapshot& snapshot,
     block->heartbeatQpc = snapshot.heartbeatQpc;
     block->flags = snapshot.flags;
     block->effectValue = snapshot.effectValue;
+    block->cameraSymbolicLinkLength = snapshot.cameraSymbolicLinkLength;
+    for (std::size_t index = 0; index < CameraSymbolicLinkCapacity; ++index) {
+        block->cameraSymbolicLink[index] = snapshot.cameraSymbolicLink[index];
+    }
     block->reserved[0] = 0;
     block->reserved[1] = 0;
     MemoryBarrier();
@@ -131,10 +146,19 @@ inline bool ReadSnapshot(const ControlBlock* block, Snapshot* snapshot) {
     candidate.heartbeatQpc = block->heartbeatQpc;
     candidate.flags = block->flags;
     candidate.effectValue = block->effectValue;
+    candidate.cameraSymbolicLinkLength = block->cameraSymbolicLinkLength;
+    for (std::size_t index = 0; index < CameraSymbolicLinkCapacity; ++index) {
+        candidate.cameraSymbolicLink[index] = block->cameraSymbolicLink[index];
+    }
     MemoryBarrier();
     const LONG second = ReadAcquire(&block->publicationSequence);
     if (first != second || (second & 1) != 0 || magic != Magic ||
-        structSize != sizeof(ControlBlock) || version != Version) {
+        structSize != sizeof(ControlBlock) || version != Version ||
+        (candidate.flags & ~KnownFlags) != 0 ||
+        candidate.cameraSymbolicLinkLength >= CameraSymbolicLinkCapacity ||
+        candidate.cameraSymbolicLink[candidate.cameraSymbolicLinkLength] != L'\0' ||
+        ((candidate.flags & FlagPhysicalCamera) != 0 &&
+         candidate.cameraSymbolicLinkLength == 0)) {
         return false;
     }
     *snapshot = candidate;
@@ -155,6 +179,10 @@ inline bool IsHeartbeatFresh(std::int64_t heartbeatQpc, std::int64_t nowQpc,
 
 inline bool IsEffectValueValid(std::uint32_t value) {
     return value >= EffectMinimum && value <= EffectMaximum;
+}
+
+inline bool IsPhysicalCameraEnabled(const Snapshot& snapshot) {
+    return (snapshot.flags & FlagPhysicalCamera) != 0;
 }
 
 } // namespace SparkFaceSourceLocalControl

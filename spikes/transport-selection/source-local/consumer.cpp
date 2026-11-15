@@ -100,10 +100,12 @@ struct Options {
     std::uint32_t frameRate = kFrameRate;
     double minimumFps = 29.5;
     double maximumP95Ms = 33.3;
+    std::uint32_t warmupFrames = 0;
     std::optional<std::uint32_t> expectedControlRevision;
     std::optional<std::uint32_t> expectedControlValue;
     std::optional<std::uint32_t> expectedControlStatus;
     std::optional<std::uint64_t> transitionAppliedFrames;
+    bool expectPhysicalCamera = false;
 };
 
 Options parse_options(int argc, wchar_t** argv) {
@@ -122,6 +124,8 @@ Options parse_options(int argc, wchar_t** argv) {
             options.minimumFps = std::stod(argv[++index]);
         } else if (argument == L"--maximum-p95-ms" && index + 1 < argc) {
             options.maximumP95Ms = std::stod(argv[++index]);
+        } else if (argument == L"--warmup-frames" && index + 1 < argc) {
+            options.warmupFrames = std::stoul(argv[++index]);
         } else if (argument == L"--expect-control-revision" && index + 1 < argc) {
             options.expectedControlRevision = std::stoul(argv[++index]);
         } else if (argument == L"--expect-control-value" && index + 1 < argc) {
@@ -130,13 +134,16 @@ Options parse_options(int argc, wchar_t** argv) {
             options.expectedControlStatus = std::stoul(argv[++index]);
         } else if (argument == L"--expect-control-dead-after" && index + 1 < argc) {
             options.transitionAppliedFrames = std::stoull(argv[++index]);
+        } else if (argument == L"--expect-physical-camera") {
+            options.expectPhysicalCamera = true;
         } else {
             throw std::invalid_argument(
                 "usage: transport_source_local_consumer [--frames N] [--width N] "
                 "[--height N] [--frame-rate N] [--minimum-fps F] "
-                "[--maximum-p95-ms F] [--expect-control-revision N] "
+                "[--maximum-p95-ms F] [--warmup-frames N] "
+                "[--expect-control-revision N] "
                 "[--expect-control-value 0..100] [--expect-control-status N] "
-                "[--expect-control-dead-after N]");
+                "[--expect-control-dead-after N] [--expect-physical-camera]");
         }
     }
     if (options.frames == 0 || options.width == 0 || options.height == 0 ||
@@ -229,16 +236,22 @@ int wmain(int argc, wchar_t** argv) {
         frameAgeMs.reserve(static_cast<std::size_t>(options.frames));
         std::uint64_t received = 0;
         std::uint64_t lastSequence = 0;
+        std::uint64_t firstSequence = 0;
         std::uint32_t sourcePid = 0;
         std::uint64_t skipped = 0;
         std::uint64_t duplicates = 0;
         std::uint64_t markerErrors = 0;
+        std::uint64_t payloadMarkerErrors = 0;
+        std::uint64_t controlMarkerErrors = 0;
+        std::uint64_t orderMarkerErrors = 0;
+        std::uint64_t physicalContentErrors = 0;
         std::uint32_t controlRevision = 0;
         bool transitionReady = false;
         bool transitionDead = false;
         std::uint32_t controlValue = 0;
         std::uint32_t controlStatus = 0;
-        const std::int64_t started = qpc_now();
+        std::uint32_t discardedWarmupFrames = 0;
+        std::int64_t started = options.warmupFrames == 0 ? qpc_now() : 0;
         while (received < options.frames) {
             DWORD actualStream = 0;
             DWORD flags = 0;
@@ -265,7 +278,16 @@ int wmain(int argc, wchar_t** argv) {
             if (current < static_cast<std::uint64_t>(options.width) *
                               options.height * 3 / 2) {
                 ++markerErrors;
+                ++payloadMarkerErrors;
                 buffer->Unlock();
+                continue;
+            }
+            if (discardedWarmupFrames < options.warmupFrames) {
+                buffer->Unlock();
+                ++discardedWarmupFrames;
+                if (discardedWarmupFrames == options.warmupFrames) {
+                    started = qpc_now();
+                }
                 continue;
             }
             const auto magic = static_cast<std::uint16_t>(
@@ -273,7 +295,7 @@ int wmain(int argc, wchar_t** argv) {
                             SparkFaceSourceLocalControl::MarkerMagicFirstBit, 16));
             const std::uint64_t sequence = decode_word(
                 bytes, SparkFaceSourceLocalControl::MarkerSequenceFirstBit, 64);
-            const auto renderQpc = static_cast<std::int64_t>(decode_word(
+            const auto frameQpc = static_cast<std::int64_t>(decode_word(
                 bytes, SparkFaceSourceLocalControl::MarkerQpcFirstBit, 64));
             const auto frameSourcePid = static_cast<std::uint32_t>(decode_word(
                 bytes, SparkFaceSourceLocalControl::MarkerSourcePidFirstBit, 32));
@@ -283,11 +305,27 @@ int wmain(int argc, wchar_t** argv) {
                 bytes, SparkFaceSourceLocalControl::MarkerEffectValueFirstBit, 32));
             const auto frameControlStatus = static_cast<std::uint32_t>(decode_word(
                 bytes, SparkFaceSourceLocalControl::MarkerStatusFirstBit, 32));
+            if (options.expectPhysicalCamera) {
+                BYTE minimumLuma = 255;
+                BYTE maximumLuma = 0;
+                for (std::uint32_t y = 100; y < options.height; y += 200) {
+                    for (std::uint32_t x = 100; x < options.width; x += 200) {
+                        const BYTE value = bytes[static_cast<std::size_t>(y) *
+                                                 options.width + x];
+                        minimumLuma = std::min(minimumLuma, value);
+                        maximumLuma = std::max(maximumLuma, value);
+                    }
+                }
+                if (maximumLuma - minimumLuma < 8) {
+                    ++physicalContentErrors;
+                }
+            }
             buffer->Unlock();
-            if (magic != kPayloadMagic || sequence == 0 || renderQpc <= 0 ||
-                renderQpc > deliveredQpc || frameSourcePid == 0 ||
+            if (magic != kPayloadMagic || sequence == 0 || frameQpc <= 0 ||
+                frameQpc > deliveredQpc || frameSourcePid == 0 ||
                 (sourcePid != 0 && frameSourcePid != sourcePid)) {
                 ++markerErrors;
+                ++payloadMarkerErrors;
                 continue;
             }
             sourcePid = frameSourcePid;
@@ -311,11 +349,13 @@ int wmain(int argc, wchar_t** argv) {
             if (options.transitionAppliedFrames.has_value()) {
                 if (transitionDead ? !matchesDead : !matchesApplied && !matchesDead) {
                     ++markerErrors;
+                    ++controlMarkerErrors;
                     continue;
                 }
                 transitionDead = transitionDead || matchesDead;
             } else if (!matchesApplied) {
                 ++markerErrors;
+                ++controlMarkerErrors;
                 continue;
             }
             if (lastSequence != 0 && sequence == lastSequence) {
@@ -324,6 +364,7 @@ int wmain(int argc, wchar_t** argv) {
                 skipped += sequence - lastSequence - 1;
             } else if (lastSequence != 0 && sequence < lastSequence) {
                 ++markerErrors;
+                ++orderMarkerErrors;
                 continue;
             }
             if (!transitionDead && options.transitionAppliedFrames.has_value() &&
@@ -331,8 +372,11 @@ int wmain(int argc, wchar_t** argv) {
                 transitionReady = true;
                 std::cout << "control_transition_ready=1" << std::endl;
             }
+            if (firstSequence == 0) {
+                firstSequence = sequence;
+            }
             lastSequence = sequence;
-            frameAgeMs.push_back(qpc_ms(renderQpc, deliveredQpc));
+            frameAgeMs.push_back(qpc_ms(frameQpc, deliveredQpc));
             ++received;
         }
         const double elapsedMs = qpc_ms(started, qpc_now());
@@ -342,11 +386,14 @@ int wmain(int argc, wchar_t** argv) {
         const double p99Ms = percentile(frameAgeMs, 0.99);
         const double maximumMs = *std::max_element(frameAgeMs.begin(),
                                                     frameAgeMs.end());
+        const bool contiguousRange = firstSequence != 0 &&
+                                     lastSequence >= firstSequence &&
+                                     lastSequence - firstSequence + 1 == received;
         const bool pass = fps >= options.minimumFps &&
                           fps <= static_cast<double>(options.frameRate) + 1.0 &&
                           p95Ms <= options.maximumP95Ms &&
                           markerErrors == 0 && duplicates == 0 && skipped == 0 &&
-                          lastSequence == received &&
+                          physicalContentErrors == 0 && contiguousRange &&
                           (!options.transitionAppliedFrames.has_value() ||
                            (transitionReady && transitionDead));
 
@@ -359,11 +406,20 @@ int wmain(int argc, wchar_t** argv) {
                   << "source_local_height=" << options.height << '\n'
                   << "source_local_frame_rate=" << options.frameRate << '\n'
                   << "source_local_frames=" << received << '\n'
+                  << "source_local_warmup_frames=" << discardedWarmupFrames << '\n'
                   << "source_local_fps_achieved=" << fps << '\n'
-                  << "source_local_render_to_client_p50_ms=" << p50Ms << '\n'
-                  << "source_local_render_to_client_p95_ms=" << p95Ms << '\n'
-                  << "source_local_render_to_client_p99_ms=" << p99Ms << '\n'
-                  << "source_local_render_to_client_max_ms=" << maximumMs << '\n'
+                  << (options.expectPhysicalCamera
+                          ? "source_local_capture_to_client_p50_ms="
+                          : "source_local_render_to_client_p50_ms=") << p50Ms << '\n'
+                  << (options.expectPhysicalCamera
+                          ? "source_local_capture_to_client_p95_ms="
+                          : "source_local_render_to_client_p95_ms=") << p95Ms << '\n'
+                  << (options.expectPhysicalCamera
+                          ? "source_local_capture_to_client_p99_ms="
+                          : "source_local_render_to_client_p99_ms=") << p99Ms << '\n'
+                  << (options.expectPhysicalCamera
+                          ? "source_local_capture_to_client_max_ms="
+                          : "source_local_render_to_client_max_ms=") << maximumMs << '\n'
                   << "source_local_gpu_conversion_count=" << lastSequence << '\n'
                   << "source_local_process_id=" << sourcePid << '\n'
                   << "source_local_control_revision=" << controlRevision << '\n'
@@ -376,6 +432,10 @@ int wmain(int argc, wchar_t** argv) {
                   << "skipped_sequences=" << skipped << '\n'
                   << "duplicate_sequences=" << duplicates << '\n'
                   << "marker_errors=" << markerErrors << '\n'
+                  << "payload_marker_errors=" << payloadMarkerErrors << '\n'
+                  << "control_marker_errors=" << controlMarkerErrors << '\n'
+                  << "order_marker_errors=" << orderMarkerErrors << '\n'
+                  << "physical_content_errors=" << physicalContentErrors << '\n'
                   << "full_frame_cpu_copy_before_frame_server=0\n"
                   << (pass ? "SOURCE_LOCAL_GATE_PASS\n"
                            : "SOURCE_LOCAL_GATE_FAIL\n");

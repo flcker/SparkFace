@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-15",
+  "candidate": "S1 H8A source-local physical-camera capture",
+  "measurement_state": "completed",
+  "outcome": "NO-GO",
+  "contract": {
+    "control_protocol_version": 2,
+    "camera_selection": "exact Media Foundation symbolic link",
+    "capture_format": "GPU-backed BGRA 1920x1080 at 30fps",
+    "output_format": "allocator-owned NV12 1920x1080 at 30fps",
+    "requested_frames": 120,
+    "minimum_fps": 29.5,
+    "maximum_capture_to_client_p95_ms": 33.3,
+    "maximum_watchdog_seconds": 45
+  },
+  "kill_gate": {
+    "status": "NO-GO",
+    "physical_camera": "Integrated Camera",
+    "media_source_initialize_hresult": "0x00000000",
+    "protocol_version": 2,
+    "allocator_adapter_luid": "00000000:000178d8",
+    "first_gpu_conversion_observed": true,
+    "latest_run_result": "watchdog",
+    "latest_capture_hresult": "0x887A0005",
+    "latest_wait_hresult": "0x80070102",
+    "alternate_observed_consumer_error": "0x80070428",
+    "strict_gate_completed": false
+  },
+  "diagnostic_two_frame_run": {
+    "status": "NO-GO",
+    "requested_frames": 2,
+    "delivered_frames": 2,
+    "fps": 2.391,
+    "capture_to_client_p95_ms": 17.643,
+    "physical_content_errors": 2,
+    "marker_errors": 0,
+    "skipped_sequences": 0,
+    "full_frame_cpu_copies_before_frame_server": 0
+  },
+  "conditional_checks": {
+    "client_reopen": "not-run; kill gate failed",
+    "frame_server_restart": "not-run; kill gate failed",
+    "applications": "not-run; kill gate failed",
+    "soak": "not-run; kill gate failed"
+  },
+  "verdict": "The Frame Server-hosted custom media source can initialize the selected physical camera and complete an initial allocator-owned GPU conversion, but recursive physical-camera capture is not sustainable. Repeated runs either stalled after the first conversion until the 45-second watchdog, returned DXGI_ERROR_DEVICE_REMOVED (0x887A0005) followed by WAIT_TIMEOUT (0x80070102), or surfaced the Frame Server service exception 0x80070428 to the consumer. A two-frame diagnostic completed at only 2.391fps and both frames failed the physical-content gate. H8A is NO-GO and does not advance to recovery, application, or soak gates."
+}

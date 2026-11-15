@@ -44,7 +44,7 @@ target_compile_definitions(transport_source_local_control_producer
 target_compile_options(transport_source_local_control_producer
                        PRIVATE /W4 /WX /permissive- /EHsc)
 target_link_libraries(transport_source_local_control_producer
-                      PRIVATE advapi32)
+                      PRIVATE advapi32 mf mfplat mfuuid ole32)
 
 add_executable(transport_source_adapter_registrar
                "${TRANSPORT_D3D11_EVIDENCE_DIR}/registrar/main.cpp")
