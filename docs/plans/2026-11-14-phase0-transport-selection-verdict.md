@@ -44,12 +44,13 @@ S1 deterministic source-local rendering later passed 1,000 frames at
 30.271fps and 12.415ms render-to-client p95, and H9 protocol-v2 productization
 passed its security, restart, side-by-side deployment, and cleanup gates.
 
-H8A rejected the actual physical-camera boundary. The selected camera and GPU
-path initialized and one allocator-owned conversion completed, but sustained
-reads produced `DXGI_ERROR_DEVICE_REMOVED` plus timeouts, a 45-second watchdog,
-or Frame Server service exception `0x80070428`. A two-frame diagnostic reached
-only 2.391fps and both frames failed the physical-content gate. Full detail:
-[H8A source-local physical-camera capture](2026-11-15-phase0-source-local-physical-camera.md).
+H8A RCA corrected the original failure diagnosis. After retaining each Media
+Foundation sample and texture through D3D11 copy completion and fixing probe
+heartbeat and low-contrast validation defects, the Frame Server-hosted source
+sustained 1,000 contiguous physical-camera frames with zero sequence, marker,
+physical-content, or pre-Frame-Server CPU-copy errors. It still reached only
+29.327fps and 50.167ms capture-to-client p95 against the unchanged 29.5fps and
+33.3ms gates. Full detail: [H8A source-local physical-camera capture](2026-11-15-phase0-source-local-physical-camera.md).
 
 ## Selection
 
@@ -58,9 +59,10 @@ only 2.391fps and both frames failed the physical-content gate. Full detail:
 - **Product fallback:** none accepted.
 - **Product readiness:** blocked.
 
-Recovery, real-application, and soak checks were not run for H8A because its
-automated physical-camera kill gate failed. Spike C independently selected its
-face-model path, but no viable camera transport remains for integration.
+Recovery, real-application, and soak checks were not run for H8A because the
+final automated run failed both performance gates. Spike C independently
+selected its face-model path, but no viable camera transport remains for
+integration.
 
 ## Consequence
 
