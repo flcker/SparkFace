@@ -7,6 +7,7 @@
 // converts directly into the allocator-owned NV12 sample.
 
 #include <Windows.h>
+#include <d3d10_1.h>
 #include <d3d11_4.h>
 #include <d3dcompiler.h>
 #include <dxgi1_6.h>
@@ -32,6 +33,8 @@ inline constexpr wchar_t EnablePath[] =
     L"C:\\Users\\Public\\SparkFaceTransportSourceLocal.flag";
 inline constexpr wchar_t TracePath[] =
     L"C:\\Users\\Public\\SparkFaceSourceLocalTrace.log";
+inline constexpr wchar_t DiagnosticModePath[] =
+    L"C:\\Users\\Public\\SparkFaceSourceLocalRca.mode";
 inline constexpr std::uint16_t PayloadMagic = 0xD311U;
 
 inline void Trace(const char* message) {
@@ -41,10 +44,11 @@ inline void Trace(const char* message) {
     if (file == INVALID_HANDLE_VALUE) {
         return;
     }
+    std::array<char, 2048> line{};
+    sprintf_s(line.data(), line.size(), "%s\r\n", message);
     DWORD written = 0;
-    WriteFile(file, message, static_cast<DWORD>(std::strlen(message)), &written,
-              nullptr);
-    WriteFile(file, "\r\n", 2, &written, nullptr);
+    WriteFile(file, line.data(), static_cast<DWORD>(std::strlen(line.data())),
+              &written, nullptr);
     CloseHandle(file);
 }
 
@@ -55,9 +59,11 @@ class Renderer final {
         h9Enabled_ = enabled_ &&
                      GetFileAttributesW(SparkFaceSourceLocalControl::EnablePath) !=
                          INVALID_FILE_ATTRIBUTES;
+        diagnosticMode_ = ReadDiagnosticMode();
         if (enabled_) {
             Trace("source_local_enabled=1");
         }
+        TraceDiagnosticMode();
         if (h9Enabled_) {
             assetStatus_ = ValidateAsset();
             if (assetStatus_ == SparkFaceSourceLocalControl::Status::Applied) {
@@ -108,28 +114,53 @@ class Renderer final {
 
         LARGE_INTEGER now{};
         RETURN_LAST_ERROR_IF(!QueryPerformanceCounter(&now));
-        const ControlState control = ReadControl(now.QuadPart);
+        ControlState control = ReadControl(now.QuadPart);
         RETURN_IF_FAILED(EnsurePipeline(outputTexture.Get(), outputDescription));
         RETURN_IF_FAILED(PreparePhysicalCamera(control));
 
         std::uint64_t sequence = conversionCount_ + 1;
         std::int64_t markerQpc = now.QuadPart;
         if (control.physicalCamera) {
-            Microsoft::WRL::ComPtr<ID3D11Texture2D> capturedTexture;
-            UINT capturedSubresource = 0;
-            const HRESULT captureResult = physicalCapture_.AcquireNext(
-                &capturedTexture, &capturedSubresource, &sequence, &markerQpc);
-            if (captureResult == E_PENDING) {
+            PhysicalCameraCapture::Frame capturedFrame;
+            HRESULT result = physicalCapture_.AcquireNext(&capturedFrame);
+            TraceStage(sequence, "capture", result);
+            if (result == E_PENDING) {
                 return S_OK;
             }
-            RETURN_IF_FAILED(captureResult);
-            context_->CopySubresourceRegion(renderTexture_.Get(), 0, 0, 0, 0,
-                                            capturedTexture.Get(),
-                                            capturedSubresource, nullptr);
+            RETURN_IF_FAILED(result);
+            sequence = capturedFrame.sequence();
+            markerQpc = capturedFrame.capture_qpc();
+
+            if (diagnosticMode_ == DiagnosticMode::CaptureOnly) {
+                capturedFrame.Reset();
+                control.physicalCamera = false;
+                TraceStage(sequence, "capture-release", S_OK);
+            } else {
+                ID3D11Texture2D* destination =
+                    diagnosticMode_ == DiagnosticMode::CopyOnly
+                        ? copyProbeTexture_.Get()
+                        : renderTexture_.Get();
+                context_->CopySubresourceRegion(
+                    destination, 0, 0, 0, 0, capturedFrame.texture(),
+                    capturedFrame.subresource(), nullptr);
+                TraceStage(sequence, "copy-submit", S_OK);
+                result = WaitForGpuCompletion();
+                TraceStage(sequence, "copy-complete", result);
+                RETURN_IF_FAILED(result);
+                capturedFrame.Reset();
+                TraceStage(sequence, "sample-release", S_OK);
+                if (diagnosticMode_ == DiagnosticMode::CopyOnly) {
+                    control.physicalCamera = false;
+                }
+            }
         }
-        RETURN_IF_FAILED(RenderBgra(sequence, markerQpc, control));
-        RETURN_IF_FAILED(ConvertToAllocatorTexture(
-            outputTexture.Get(), outputDescription, outputSubresource));
+        HRESULT result = RenderBgra(sequence, markerQpc, control);
+        TraceStage(sequence, "overlay", result);
+        RETURN_IF_FAILED(result);
+        result = ConvertToAllocatorTexture(outputTexture.Get(), outputDescription,
+                                           outputSubresource);
+        TraceStage(sequence, "convert", result);
+        RETURN_IF_FAILED(result);
         context_->Flush();
 
         conversionCount_ = sequence;
@@ -177,6 +208,87 @@ class Renderer final {
     };
 
     static constexpr std::size_t OutputViewCapacity = 10;
+
+    enum class DiagnosticMode { CaptureOnly, CopyOnly, Full };
+
+    DiagnosticMode ReadDiagnosticMode() {
+        HANDLE file = CreateFileW(DiagnosticModePath, GENERIC_READ,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            return DiagnosticMode::Full;
+        }
+        std::array<char, 32> value{};
+        DWORD bytes = 0;
+        const BOOL read = ReadFile(file, value.data(),
+                                   static_cast<DWORD>(value.size() - 1), &bytes,
+                                   nullptr);
+        CloseHandle(file);
+        if (!read) {
+            return DiagnosticMode::Full;
+        }
+        if (std::strcmp(value.data(), "capture-only") == 0) {
+            return DiagnosticMode::CaptureOnly;
+        }
+        if (std::strcmp(value.data(), "copy-only") == 0) {
+            return DiagnosticMode::CopyOnly;
+        }
+        return DiagnosticMode::Full;
+    }
+
+    [[nodiscard]] const char* DiagnosticModeName() const {
+        switch (diagnosticMode_) {
+        case DiagnosticMode::CaptureOnly:
+            return "capture-only";
+        case DiagnosticMode::CopyOnly:
+            return "copy-only";
+        case DiagnosticMode::Full:
+            return "full";
+        }
+        return "unknown";
+    }
+
+    void TraceDiagnosticMode() {
+        char message[64]{};
+        sprintf_s(message, "source_local_diagnostic_mode=%s",
+                  DiagnosticModeName());
+        Trace(message);
+    }
+
+    void TraceStage(std::uint64_t sequence, const char* stage, HRESULT result) {
+        if (diagnosticMode_ == DiagnosticMode::Full && SUCCEEDED(result) &&
+            sequence > 5 && (sequence % 100) != 0) {
+            return;
+        }
+        char message[160]{};
+        const HRESULT removed =
+            device_ == nullptr ? E_POINTER : device_->GetDeviceRemovedReason();
+        sprintf_s(
+            message,
+            "source_local_stage sequence=%llu mode=%s stage=%s hresult=0x%08lx removed_reason=0x%08lx",
+            static_cast<unsigned long long>(sequence), DiagnosticModeName(),
+            stage, static_cast<unsigned long>(result),
+            static_cast<unsigned long>(removed));
+        Trace(message);
+    }
+
+    HRESULT WaitForGpuCompletion() {
+        RETURN_HR_IF_NULL(E_UNEXPECTED, copyCompleteQuery_.Get());
+        context_->End(copyCompleteQuery_.Get());
+        context_->Flush();
+        const ULONGLONG deadline = GetTickCount64() + 2000;
+        for (;;) {
+            const HRESULT result = context_->GetData(copyCompleteQuery_.Get(),
+                                                     nullptr, 0, 0);
+            if (result != S_FALSE) {
+                return result;
+            }
+            if (GetTickCount64() >= deadline) {
+                return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+            }
+            Sleep(0);
+        }
+    }
 
     static constexpr char VertexShader[] = R"(
 struct Output { float4 position : SV_Position; };
@@ -429,6 +541,13 @@ float4 main(float4 position : SV_Position) : SV_Target {
     }
 
     HRESULT PreparePhysicalCamera(const ControlState& control) {
+        if (control.status ==
+                SparkFaceSourceLocalControl::Status::HeartbeatStale &&
+            physicalCameraInitialized_ && !physicalCameraHeartbeatStale_) {
+            physicalCameraHeartbeatStale_ = true;
+            return S_OK;
+        }
+        physicalCameraHeartbeatStale_ = false;
         if (!control.physicalCamera ||
             control.status != SparkFaceSourceLocalControl::Status::Applied) {
             if (physicalCameraInitialized_) {
@@ -447,7 +566,8 @@ float4 main(float4 position : SV_Position) : SV_Target {
         physicalCameraInitialized_ = false;
         RETURN_IF_FAILED(physicalCapture_.Initialize(
             device_.Get(), control.cameraSymbolicLink.data(),
-            control.cameraSymbolicLinkLength, width_, height_, 30));
+            control.cameraSymbolicLinkLength, width_, height_, 30,
+            diagnosticMode_ != DiagnosticMode::Full));
         physicalCameraInitialized_ = true;
         physicalCameraSelectionHash_ = selectionHash;
         const LUID luid = physicalCapture_.allocator_luid();
@@ -491,6 +611,12 @@ float4 main(float4 position : SV_Position) : SV_Target {
         RETURN_HR_IF_NULL(E_UNEXPECTED, context_.Get());
         RETURN_IF_FAILED(device_.As(&videoDevice_));
         RETURN_IF_FAILED(context_.As(&videoContext_));
+        // The Source Reader and renderer submit on different threads through
+        // the allocator device. The immediate context must serialize them.
+        Microsoft::WRL::ComPtr<ID3D10Multithread> multithread;
+        RETURN_IF_FAILED(device_.As(&multithread));
+        multithread->SetMultithreadProtected(TRUE);
+        Trace("source_local_multithread_protected=1");
 
         Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
         RETURN_IF_FAILED(device_.As(&dxgiDevice));
@@ -538,6 +664,16 @@ float4 main(float4 position : SV_Position) : SV_Target {
             &renderDescription, nullptr, &renderTexture_));
         RETURN_IF_FAILED(device_->CreateRenderTargetView(
             renderTexture_.Get(), nullptr, &renderTarget_));
+        if (diagnosticMode_ == DiagnosticMode::CopyOnly) {
+            RETURN_IF_FAILED(device_->CreateTexture2D(
+                &renderDescription, nullptr, &copyProbeTexture_));
+        }
+        if (diagnosticMode_ != DiagnosticMode::CaptureOnly) {
+            D3D11_QUERY_DESC queryDescription{};
+            queryDescription.Query = D3D11_QUERY_EVENT;
+            RETURN_IF_FAILED(device_->CreateQuery(&queryDescription,
+                                                  &copyCompleteQuery_));
+        }
 
         D3D11_VIDEO_PROCESSOR_CONTENT_DESC contentDescription{};
         contentDescription.InputFrameFormat =
@@ -687,6 +823,8 @@ float4 main(float4 position : SV_Position) : SV_Target {
         videoEnumerator_.Reset();
         renderTarget_.Reset();
         renderTexture_.Reset();
+        copyCompleteQuery_.Reset();
+        copyProbeTexture_.Reset();
         constantBuffer_.Reset();
         pixelShader_.Reset();
         vertexShader_.Reset();
@@ -701,6 +839,7 @@ float4 main(float4 position : SV_Position) : SV_Target {
     std::array<OutputViewEntry, OutputViewCapacity> outputViews_{};
     std::size_t outputViewCount_ = 0;
     bool enabled_ = false;
+    DiagnosticMode diagnosticMode_ = DiagnosticMode::Full;
     bool h9Enabled_ = false;
     SparkFaceSourceLocalControl::Status assetStatus_ =
         SparkFaceSourceLocalControl::Status::Disabled;
@@ -718,6 +857,7 @@ float4 main(float4 position : SV_Position) : SV_Target {
     UINT width_ = 0;
     UINT height_ = 0;
     bool physicalCameraInitialized_ = false;
+    bool physicalCameraHeartbeatStale_ = false;
     std::uint32_t physicalCameraSelectionHash_ = 0;
     PhysicalCameraCapture physicalCapture_;
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
@@ -728,6 +868,8 @@ float4 main(float4 position : SV_Position) : SV_Target {
     Microsoft::WRL::ComPtr<ID3D11PixelShader> pixelShader_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> constantBuffer_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> renderTexture_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> copyProbeTexture_;
+    Microsoft::WRL::ComPtr<ID3D11Query> copyCompleteQuery_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> renderTarget_;
     Microsoft::WRL::ComPtr<ID3D11VideoProcessorEnumerator> videoEnumerator_;
     Microsoft::WRL::ComPtr<ID3D11VideoProcessor> videoProcessor_;

@@ -46,6 +46,15 @@ target_compile_options(transport_source_local_control_producer
 target_link_libraries(transport_source_local_control_producer
                       PRIVATE advapi32 mf mfplat mfuuid ole32)
 
+add_executable(transport_physical_camera_isolation
+               source-local/physical_camera_isolation.cpp)
+target_compile_definitions(transport_physical_camera_isolation
+                           PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(transport_physical_camera_isolation
+                       PRIVATE /W4 /WX /permissive- /EHsc)
+target_link_libraries(transport_physical_camera_isolation
+                      PRIVATE d3d11 dxgi mf mfplat mfreadwrite mfuuid ole32)
+
 add_executable(transport_source_adapter_registrar
                "${TRANSPORT_D3D11_EVIDENCE_DIR}/registrar/main.cpp")
 target_compile_definitions(transport_source_adapter_registrar

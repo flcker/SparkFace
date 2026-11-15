@@ -9,6 +9,8 @@
     "producer_scope": "interactive user session",
     "consumer_scope": "Frame Server LocalService media-source host",
     "fail_safe_effect_value": 0,
+    "live_producer_heartbeat_maximum_age_ms": 5000,
+    "heartbeat_thread_priority": "above normal",
     "scenario_frames": 120,
     "startup_warmup_frames": 5,
     "minimum_fps": 29.5,
@@ -27,8 +29,8 @@
     "normal_v2": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.303,
-      "render_to_client_p95_ms": 10.337,
+      "fps": 30.295,
+      "render_to_client_p95_ms": 11.249,
       "control_revision": 101,
       "control_value": 20,
       "control_status": 0,
@@ -37,16 +39,16 @@
     "protocol_mismatch": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.310,
-      "render_to_client_p95_ms": 11.450,
+      "fps": 30.335,
+      "render_to_client_p95_ms": 10.803,
       "fail_safe_control_status": 5,
       "marker_errors": 0
     },
     "producer_crash_transition": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.318,
-      "render_to_client_p95_ms": 11.524,
+      "fps": 30.303,
+      "render_to_client_p95_ms": 12.452,
       "applied_state_observed": true,
       "producer_dead_state_observed": true,
       "fail_safe_control_status": 7,
@@ -55,8 +57,8 @@
     "producer_recovery": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.350,
-      "render_to_client_p95_ms": 11.721,
+      "fps": 30.330,
+      "render_to_client_p95_ms": 12.017,
       "control_revision": 104,
       "control_value": 40,
       "marker_errors": 0
@@ -64,8 +66,8 @@
     "frame_server_restart": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.195,
-      "render_to_client_p95_ms": 11.611,
+      "fps": 30.447,
+      "render_to_client_p95_ms": 12.212,
       "control_revision": 104,
       "control_value": 40,
       "marker_errors": 0
@@ -73,8 +75,8 @@
     "side_by_side_v2": {
       "status": "PASS",
       "frames": 120,
-      "fps": 30.374,
-      "render_to_client_p95_ms": 12.341,
+      "fps": 30.330,
+      "render_to_client_p95_ms": 12.025,
       "control_revision": 104,
       "control_value": 40,
       "marker_errors": 0
@@ -99,5 +101,5 @@
     "marker_errors": 0,
     "full_frame_cpu_copies_before_frame_server": 0
   },
-  "selection_impact": "H9 protocol-v2 product control, fail-safe security, restart, side-by-side update, and cleanup gates pass. H8A source-local physical-camera capture is NO-GO, so S1 does not provide a viable integrated camera pipeline."
+  "selection_impact": "H9 protocol-v2 product control, immediate producer-dead detection, five-second live-process heartbeat tolerance, fail-safe security, restart, side-by-side update, and cleanup gates pass. H8A physical capture is functionally stable but fails the 29.5fps and 33.3ms p95 gates, so S1 still does not provide a viable integrated camera pipeline."
 }
